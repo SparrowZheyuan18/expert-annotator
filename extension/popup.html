@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Expert Annotator Popup</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color-scheme: light dark;
+      }
+
+      body {
+        margin: 0;
+        padding: 12px;
+        width: 320px;
+        background: #f5f6f8;
+        color: #202124;
+      }
+
+      h1 {
+        font-size: 1.1rem;
+        margin: 0 0 0.75rem;
+      }
+
+      form {
+        display: grid;
+        gap: 0.5rem;
+      }
+
+      label {
+        display: grid;
+        gap: 0.25rem;
+        font-size: 0.85rem;
+      }
+
+      input,
+      textarea {
+        border: 1px solid #c4c7cf;
+        border-radius: 6px;
+        padding: 6px 8px;
+        font-size: 0.9rem;
+        width: 100%;
+        box-sizing: border-box;
+      }
+
+      textarea {
+        resize: vertical;
+        min-height: 60px;
+      }
+
+      button {
+        border: none;
+        border-radius: 6px;
+        padding: 8px;
+        font-size: 0.9rem;
+        cursor: pointer;
+      }
+
+      .primary {
+        background: #1a73e8;
+        color: #fff;
+      }
+
+      .secondary {
+        background: #fff;
+        border: 1px solid #dadce0;
+      }
+
+      .actions {
+        display: flex;
+        gap: 0.5rem;
+        margin-top: 0.75rem;
+      }
+
+      .status {
+        margin-top: 0.25rem;
+        font-size: 0.8rem;
+        color: #5f6368;
+      }
+
+      .session-meta {
+        font-size: 0.85rem;
+        line-height: 1.4;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Expert Annotator</h1>
+      <section id="start-session-section">
+        <form id="session-form">
+          <label>
+            Expert name
+            <input name="expert_name" type="text" required autocomplete="off" />
+          </label>
+          <label>
+            Topic
+            <input name="topic" type="text" required autocomplete="off" />
+          </label>
+          <label>
+            Research goal
+            <textarea name="research_goal" required></textarea>
+          </label>
+          <button class="primary" type="submit">Start session</button>
+        </form>
+      </section>
+
+      <section id="active-session-section" hidden>
+        <div class="session-meta" id="session-summary"></div>
+        <div class="actions">
+          <button class="primary" id="export-btn">Export</button>
+          <button class="secondary" id="reset-btn">Reset</button>
+        </div>
+      </section>
+
+      <p class="status" id="status-message"></p>
+    </main>
+    <script src="api.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

@@ -1,0 +1,42 @@
+{
+  "session_id": "827ea684-30fb-4430-ab11-8370f9a2dba9",
+  "expert_name": "Dr. Rivera",
+  "topic": "Urban Heat Islands",
+  "research_goal": "Identify mitigation strategies referenced in recent coverage",
+  "start_time": "2025-10-20T04:02:21.191940+00:00",
+  "end_time": null,
+  "documents": [
+    {
+      "document_id": "1d388d2b-362d-5e94-8165-2e5675835553",
+      "title": "City launches green roof initiative",
+      "url": "https://news.example.com/green-roofs",
+      "type": "html",
+      "accessed_at": "2024-05-12T09:30:00Z",
+      "highlights": [
+        {
+          "highlight_id": "021bc34c-86f7-446f-971e-cea088ebb88c",
+          "text": "The program aims to install 500 green roofs to combat rising urban temperatures.",
+          "selector": {
+            "type": "TextQuote",
+            "exact": "The program aims to install 500 green roofs to combat rising urban temperatures.",
+            "prefix": "city officials said ",
+            "suffix": " as part of the pilot"
+          },
+          "ai_suggestions": [
+            "Assess how this passage advances the research goal: \"The program aims to install 500 green roofs to combat rising urban temperatures.\"",
+            "Identify assumptions or evidence gaps that need validation.",
+            "Consider follow-up searches to deepen context or cross-check sources."
+          ],
+          "user_judgment": {
+            "chosen_label": "Core Concept",
+            "reasoning": "Assess how this passage advances the research goal: \"The program aims to install 500 green roofs to combat rising urban temperatures.\"",
+            "confidence": 0.8
+          },
+          "timestamp": "2025-10-20T04:02:21.206299+00:00"
+        }
+      ],
+      "global_judgment": null
+    }
+  ],
+  "search_episodes": []
+}
