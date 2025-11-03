@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Expert Annotator PDF Viewer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="pdf_viewer.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1 id="doc-title">PDF Viewer</h1>
+        <p id="doc-url"></p>
+      </div>
+      <div class="actions">
+        <button id="zoom-out" class="secondary" title="Zoom out">−</button>
+        <span id="zoom-level" class="zoom-indicator">100%</span>
+        <button id="zoom-in" class="secondary" title="Zoom in">+</button>
+        <button id="fit-width" class="secondary" title="Fit width">Fit</button>
+        <button id="toggle-text-layer" class="secondary">Hide Text Layer</button>
+        <button id="complete-document" class="primary" title="Finish reading">Complete Paper</button>
+        <button id="open-original" class="secondary">Open Original</button>
+      </div>
+    </header>
+    <main id="viewer"></main>
+    <footer>
+      <p>Select text in the PDF. Highlights will appear in the side panel.</p>
+    </footer>
+    <script src="api.js"></script>
+    <script src="pdf_viewer.js"></script>
+  </body>
+</html>

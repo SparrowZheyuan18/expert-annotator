@@ -37,6 +37,8 @@ def init_db() -> None:
                 url TEXT NOT NULL,
                 type TEXT NOT NULL,
                 accessed_at TEXT NOT NULL,
+                global_judgment_json TEXT,
+                pdf_review_json TEXT,
                 UNIQUE(session_id, url),
                 FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
             );
@@ -49,17 +51,63 @@ def init_db() -> None:
                 session_id TEXT NOT NULL,
                 document_id TEXT NOT NULL,
                 text TEXT NOT NULL,
+                context TEXT,
                 selector_json TEXT NOT NULL,
                 ai_suggestions_json TEXT NOT NULL,
                 chosen_label TEXT NOT NULL,
                 reasoning TEXT NOT NULL,
                 confidence REAL,
+                user_judgment_json TEXT,
                 timestamp TEXT NOT NULL,
                 FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE,
                 FOREIGN KEY (document_id) REFERENCES documents(document_id) ON DELETE CASCADE
             );
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS search_episodes (
+                episode_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                query TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+            );
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS interactions (
+                interaction_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                interaction_type TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+            );
+            """
+        )
+
+        # Apply schema migrations for existing databases
+        try:
+            conn.execute("ALTER TABLE documents ADD COLUMN global_judgment_json TEXT")
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            conn.execute("ALTER TABLE highlights ADD COLUMN user_judgment_json TEXT")
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            conn.execute("ALTER TABLE highlights ADD COLUMN context TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE documents ADD COLUMN pdf_review_json TEXT")
+        except sqlite3.OperationalError:
+            pass
     conn.close()
 
 

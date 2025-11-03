@@ -21,6 +21,12 @@ header {
   margin-bottom: 1rem;
 }
 
+.header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
 h1 {
   margin: 0;
   font-size: 1.2rem;
@@ -51,6 +57,133 @@ h1 {
   margin-top: 1rem;
   display: grid;
   gap: 1rem;
+}
+
+.document-summary {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  background: #f1f3f4;
+  border-left: 4px solid #1a73e8;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  color: #202124;
+}
+
+.highlight-summary {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid #d0d4db;
+  border-radius: 10px;
+  background: #ffffff;
+  font-size: 0.85rem;
+  color: #202124;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+  display: grid;
+  gap: 0.5rem;
+}
+
+.highlight-summary header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.9rem;
+}
+
+.highlight-summary .progress {
+  color: #5f6368;
+  font-size: 0.8rem;
+}
+
+.highlight-summary details {
+  border: 1px solid #eaecf0;
+  border-radius: 8px;
+  padding: 0.35rem 0.6rem;
+  background: #f8f9fa;
+}
+
+.highlight-summary details[open] {
+  background: #fff;
+}
+
+.highlight-summary summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #1a73e8;
+  outline: none;
+}
+
+.highlight-summary ul {
+  list-style: none;
+  padding-left: 0;
+  margin: 0.5rem 0 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.highlight-summary li {
+  display: grid;
+  gap: 0.25rem;
+  border-bottom: 1px solid #eaecf0;
+  padding-bottom: 0.25rem;
+}
+
+.highlight-summary li:last-child {
+  border-bottom: none;
+}
+
+.highlight-summary .highlight-meta-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.highlight-summary .meta-tags {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.highlight-summary .meta-tag {
+  background: rgba(26, 115, 232, 0.1);
+  color: #1a73e8;
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.75rem;
+}
+
+.highlight-summary .meta-tag.pdf {
+  background: rgba(255, 214, 0, 0.2);
+  color: #a05a00;
+}
+
+.highlight-summary .meta-tag.sentiment {
+  background: rgba(52, 168, 83, 0.18);
+  color: #0b8043;
+}
+
+.highlight-summary .meta-tag.sentiment-thumbsdown {
+  background: rgba(234, 67, 53, 0.18);
+  color: #a50e0e;
+}
+
+.highlight-summary .meta-tag.sentiment-neutral_information {
+  background: rgba(66, 133, 244, 0.18);
+  color: #1a73e8;
+}
+
+.highlight-summary .highlight-text-preview {
+  font-size: 0.8rem;
+  color: #3c4043;
+}
+
+.highlight-summary .highlight-actions {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.highlight-summary button {
+  font-size: 0.75rem;
+  padding: 0.25rem 0.5rem;
 }
 
 .highlight-card {
@@ -88,6 +221,17 @@ blockquote {
   line-height: 1.4;
 }
 
+.highlight-context {
+  margin: 0;
+  padding: 0.6rem;
+  background: #f8f9fa;
+  border-left: 3px solid #5f6368;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  color: #3c4043;
+  white-space: pre-wrap;
+}
+
 .suggestions h3 {
   margin: 0 0 0.5rem;
   font-size: 0.9rem;
@@ -98,6 +242,21 @@ blockquote {
   padding-left: 1.25rem;
   font-size: 0.85rem;
   color: #3c4043;
+}
+
+.reference-links {
+  font-size: 0.85rem;
+  color: #3c4043;
+}
+
+.reference-links ul {
+  margin: 0.25rem 0 0;
+  padding-left: 1.25rem;
+}
+
+.reference-links a {
+  color: #1a73e8;
+  word-break: break-all;
 }
 
 .field {
@@ -117,6 +276,12 @@ blockquote {
   box-sizing: border-box;
 }
 
+.field .field-label {
+  font-weight: 600;
+  font-size: 0.82rem;
+  color: #3c4043;
+}
+
 .actions {
   display: flex;
   align-items: center;
@@ -131,6 +296,10 @@ blockquote {
   padding: 0.6rem 1rem;
   font-size: 0.9rem;
   cursor: pointer;
+}
+
+.primary.subtle {
+  background: #0b57d0;
 }
 
 .secondary {
@@ -153,4 +322,179 @@ blockquote {
 
 .save-status.error {
   color: #d93025;
+}
+
+
+.doc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.doc-group {
+  border: 1px solid #eaecf0;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 0.5rem 0.75rem 0.75rem;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.06);
+}
+
+.doc-group > summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: #202124;
+}
+
+.doc-group[open] > summary {
+  margin-bottom: 0.5rem;
+}
+
+.doc-body {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.doc-summary-card {
+  border: 1px solid #e2e5ec;
+  border-radius: 10px;
+  padding: 0.75rem 0.9rem;
+  background: #f6f8ff;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.doc-summary-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.doc-summary-card__title {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: #1f1f1f;
+}
+
+.doc-summary-card__timestamp {
+  font-size: 0.75rem;
+  color: #5f6368;
+}
+
+.doc-summary-card__content {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.doc-summary-card__row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  font-size: 0.8rem;
+  color: #3c4043;
+}
+
+.doc-summary-card__row .label {
+  font-weight: 600;
+  min-width: 110px;
+  color: #1f1f1f;
+}
+
+.doc-summary-card__row .value {
+  flex: 1;
+  white-space: pre-wrap;
+}
+
+.doc-review-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  border-bottom: 1px solid #eaecf0;
+  padding-bottom: 0.5rem;
+}
+
+.doc-review-bar .field.inline {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+}
+
+.doc-sentiment-select {
+  border: 1px solid #c4c7cf;
+  border-radius: 8px;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.9rem;
+}
+
+.doc-review-hint {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #5f6368;
+}
+
+.doc-highlight-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.doc-highlight-list.ordered {
+  counter-reset: doc-highlight;
+}
+
+.doc-highlight-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  border: 1px solid #eaecf0;
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  background: #f8f9ff;
+}
+
+.doc-highlight-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  max-width: 70%;
+}
+
+.doc-highlight-rank {
+  align-self: flex-start;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #0b57d0;
+  background: #e8f0fe;
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.doc-highlight-text blockquote {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #202124;
+}
+
+.doc-highlight-meta {
+  font-size: 0.75rem;
+  color: #5f6368;
+}
+
+.doc-highlight-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.doc-highlight-actions button {
+  font-size: 0.8rem;
+  padding: 0.35rem 0.6rem;
 }

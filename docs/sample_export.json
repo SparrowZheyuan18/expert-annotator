@@ -1,42 +1,131 @@
 {
-  "session_id": "827ea684-30fb-4430-ab11-8370f9a2dba9",
+  "session_id": "1b2b3c4d-0000-4000-8000-feedface0001",
   "expert_name": "Dr. Rivera",
   "topic": "Urban Heat Islands",
-  "research_goal": "Identify mitigation strategies referenced in recent coverage",
-  "start_time": "2025-10-20T04:02:21.191940+00:00",
-  "end_time": null,
+  "research_goal": "Map promising mitigation strategies from recent literature",
+  "start_time": "2025-10-30T12:15:04.102311+00:00",
+  "end_time": "2025-10-30T13:02:41.887544+00:00",
   "documents": [
     {
-      "document_id": "1d388d2b-362d-5e94-8165-2e5675835553",
-      "title": "City launches green roof initiative",
-      "url": "https://news.example.com/green-roofs",
+      "document_id": "90544eb1-835d-53cb-9677-1d4d5b519e8d",
+      "title": "Cool roof programs",
+      "url": "https://example.com/blog/cool-roofs",
       "type": "html",
-      "accessed_at": "2024-05-12T09:30:00Z",
+      "accessed_at": "2025-10-30T12:20:15Z",
       "highlights": [
         {
-          "highlight_id": "021bc34c-86f7-446f-971e-cea088ebb88c",
-          "text": "The program aims to install 500 green roofs to combat rising urban temperatures.",
+          "highlight_id": "f0a1d231-a9af-44f8-8f9d-770954c4cb75",
+          "text": "City council approved a 3-year pilot that subsidises reflective coatings for low-income neighbourhoods.",
+          "context": "In July, the City council approved a 3-year pilot that subsidises reflective coatings for low-income neighbourhoods, according to early budget notes.",
           "selector": {
             "type": "TextQuote",
-            "exact": "The program aims to install 500 green roofs to combat rising urban temperatures.",
-            "prefix": "city officials said ",
-            "suffix": " as part of the pilot"
+            "exact": "City council approved a 3-year pilot that subsidises reflective coatings for low-income neighbourhoods.",
+            "prefix": "In July, the ",
+            "suffix": " according to early budget notes."
           },
           "ai_suggestions": [
-            "Assess how this passage advances the research goal: \"The program aims to install 500 green roofs to combat rising urban temperatures.\"",
-            "Identify assumptions or evidence gaps that need validation.",
-            "Consider follow-up searches to deepen context or cross-check sources."
+            "Capture why this policy is worth a deeper read.",
+            "Note funding or equity constraints to verify later.",
+            "Decide whether the linked PDF warrants immediate review."
           ],
           "user_judgment": {
-            "chosen_label": "Core Concept",
-            "reasoning": "Assess how this passage advances the research goal: \"The program aims to install 500 green roofs to combat rising urban temperatures.\"",
-            "confidence": 0.8
+            "chosen_label": "Search Result",
+            "reasoning": "Pilot targets the demographic we care about and includes subsidy details.",
+            "decision": "want",
+            "decision_reason": "Pilot targets the demographic we care about and includes subsidy details.",
+            "decision_contribution": "Prioritised this article in the reading queue and opened the cited PDF."
           },
-          "timestamp": "2025-10-20T04:02:21.206299+00:00"
+          "timestamp": "2025-10-30T12:22:03.118245+00:00"
         }
       ],
       "global_judgment": null
+    },
+    {
+      "document_id": "e9959ce9-3f06-5c7a-9c84-44bf94b0c49f",
+      "title": "Mitigating UHI via Urban Forestry",
+      "url": "https://arxiv.org/pdf/2402.14207.pdf",
+      "type": "pdf",
+      "accessed_at": "2025-10-30T12:34:44Z",
+      "highlights": [
+        {
+          "highlight_id": "2ab199c4-10ef-4cc3-9cd7-ed26d3f50398",
+          "text": "A coordinated tree-planting plan can lower local surface temperatures by 1.6\u2103 within five years.",
+          "context": "A coordinated tree-planting plan can lower local surface temperatures by 1.6\u2103 within five years.",
+          "selector": {
+            "type": "PDFText",
+            "page": 4,
+            "text": "A coordinated tree-planting plan can lower local surface temperatures by 1.6\u2103 within five years.",
+            "coords": {
+              "x1": 96.12,
+              "y1": 428.54,
+              "x2": 468.33,
+              "y2": 455.18
+            },
+            "rects": [
+              {
+                "x1": 96.12,
+                "y1": 428.54,
+                "x2": 468.33,
+                "y2": 440.07,
+                "width": 372.21,
+                "height": 11.53
+              },
+              {
+                "x1": 96.22,
+                "y1": 441.85,
+                "x2": 366.05,
+                "y2": 455.18,
+                "width": 269.83,
+                "height": 13.33
+              }
+            ]
+          },
+          "ai_suggestions": [
+            "Note assumptions behind the 1.6\u2103 estimate for follow-up.",
+            "Capture any equity or maintenance challenges mentioned nearby.",
+            "Consider whether this result supports the pilot shortlisted earlier."
+          ],
+          "user_judgment": {
+            "chosen_label": "PDF Highlight",
+            "reasoning": "Quantifies cooling impact in a timeframe relevant to the city's climate plan.",
+            "confidence": 0.7
+          },
+          "timestamp": "2025-10-30T12:45:29.552130+00:00"
+        }
+      ],
+      "global_judgment": {
+        "final_thoughts": "Strong quantitative backing. Need to cross-check maintenance costs with budget survey.",
+        "next_steps": "Share with policy leads and compare with cool roof ROI analysis.",
+        "timestamp": "2025-10-30T12:56:04.667210+00:00"
+      },
+      "pdf_review": {
+        "sentiment": "thumbsup",
+        "highlight_order": [
+          "2ab199c4-10ef-4cc3-9cd7-ed26d3f50398"
+        ]
+      }
     }
   ],
-  "search_episodes": []
+  "search_episodes": [
+    {
+      "platform": "google_scholar",
+      "query": "urban heat island mitigation pilot",
+      "timestamp": "2025-10-30T12:18:08.991020+00:00"
+    }
+  ],
+  "interactions": [
+    {
+      "interaction_id": "f5cf4db6-6d26-43e4-a7e7-c4c1ae7b8de5",
+      "interaction_type": "open_result",
+      "payload": {
+        "url": "https://arxiv.org/pdf/2402.14207.pdf",
+        "title": "Assisting in Writing Wikipedia-like Articles From Scratch",
+        "context": {
+          "page_url": "https://scholar.google.com/scholar?q=urban+heat+island+mitigation",
+          "page_title": "urban heat island mitigation - Google Scholar"
+        }
+      },
+      "timestamp": "2025-10-30T12:31:44.210554+00:00"
+    }
+  ]
 }

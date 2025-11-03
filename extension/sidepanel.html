@@ -12,11 +12,28 @@
         <h1>Expert Annotator</h1>
         <p id="session-info"></p>
       </div>
-      <button id="export-btn" class="secondary" disabled>Export</button>
+      <div class="header-actions">
+        <button id="open-pdf-btn" class="secondary" disabled>Open PDF Mode</button>
+        <button id="export-btn" class="secondary" disabled>Export</button>
+        <button id="finish-btn" class="primary subtle" disabled>Finish Research</button>
+      </div>
     </header>
 
     <section id="notice" class="notice" role="status" aria-live="polite">
       Start a session from the popup to capture highlights.
+    </section>
+
+    <section id="document-summary" class="document-summary" hidden></section>
+
+    <section id="highlight-summary" class="highlight-summary" hidden>
+      <header>
+        <strong>Saved Notes</strong>
+        <span class="progress" id="highlight-progress">0 highlights</span>
+      </header>
+      <details id="highlight-list" open>
+        <summary>Show highlights</summary>
+        <div class="doc-list"></div>
+      </details>
     </section>
 
     <section id="highlight-container"></section>
@@ -37,22 +54,17 @@
         </div>
 
         <label class="field">
-          Label
-          <select class="label-select">
-            <option value="Core Concept">Core Concept</option>
-            <option value="Not Relevant">Not Relevant</option>
-            <option value="Method Weakness">Method Weakness</option>
-            <option value="Generate New Search">Generate New Search</option>
-          </select>
+          <span class="field-label">Label</span>
+          <select class="label-select"></select>
         </label>
 
         <label class="field">
-          Reasoning
+          <span class="field-label">Reasoning</span>
           <textarea class="reasoning-input" rows="4"></textarea>
         </label>
 
         <label class="field">
-          Confidence (0-1, optional)
+          <span class="field-label">Confidence (0-1, optional)</span>
           <input class="confidence-input" type="number" min="0" max="1" step="0.1" placeholder="e.g. 0.8" />
         </label>
 
@@ -64,6 +76,7 @@
     </template>
 
     <script src="api.js"></script>
+    <script src="highlightSummary.js"></script>
     <script src="sidepanel.js"></script>
   </body>
 </html>

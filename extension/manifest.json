@@ -1,13 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Expert Annotator",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Document-centric expert annotation workflow with AI suggestions.",
   "permissions": [
     "activeTab",
     "scripting",
     "storage",
-    "sidePanel"
+    "sidePanel",
+    "downloads",
+    "tabs"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -20,6 +22,7 @@
       "matches": [
         "<all_urls>"
       ],
+      "all_frames": true,
       "js": [
         "content.js"
       ],
@@ -32,5 +35,16 @@
   },
   "side_panel": {
     "default_path": "sidepanel.html"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "vendor/pdf.min.js",
+        "vendor/pdf.worker.min.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ]
 }

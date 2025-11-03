@@ -29,13 +29,14 @@ function render() {
     startSection.hidden = true;
     activeSection.hidden = false;
     const startedAt = new Date(currentSession.start_time);
+    const endedAt = currentSession.end_time ? new Date(currentSession.end_time) : null;
     sessionSummary.innerHTML = `
       <strong>${currentSession.expert_name}</strong><br />
       Topic: ${currentSession.topic}<br />
       Goal: ${currentSession.research_goal}<br />
-      Started: ${startedAt.toLocaleString()}
+      Started: ${startedAt.toLocaleString()}${endedAt ? `<br />Ended: ${endedAt.toLocaleString()}` : ""}
     `;
-    setStatus("Session active. Select text on any page to annotate.");
+    setStatus(endedAt ? "Session completed. Review data or reset to begin anew." : "Session active. Select text on any page to annotate.");
   } else {
     startSection.hidden = false;
     activeSection.hidden = true;
