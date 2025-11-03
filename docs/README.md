@@ -8,10 +8,10 @@ Document-centric expert annotation workflow composed of:
 This milestone delivers the full HTML + PDF annotation loop:
 
 1. Start a session from the popup (`expert_name`, `topic`, `research_goal`).
-2. When使用 Google Scholar 或 Semantic Scholar，查询会被记录为 **search episodes**，点击某个搜索结果也会同步写入 **interactions**。
-3. 在搜索阶段（HTML 列表）选中一条内容 → 侧边栏展示决策表单（是否点击、原因、贡献）。
-4. 在 PDF 阶段，选中段落会先弹出轻量工具条，点击 “Highlight” 后侧边栏展开标注卡片，同时在 PDF 页面上渲染醒目的荧光笔高亮；完成阅读后可在 viewer 中输入 final thoughts 与下一步行动。
-5. 所有信息通过 `/sessions/{id}/documents/{doc}/highlights`、`/summary` 等接口持久化，并在侧边栏的 “Saved Notes” 区块实时展示；点击任意笔记即可重新编辑，最终可通过 `/export/{id}` 下载结构化 JSON。
+2. Activity on Google Scholar or Semantic Scholar is logged automatically: search queries become **search episodes** and opening a result records an **interaction**.
+3. While reviewing HTML results, select a snippet to open the side panel decision form (record intent, reasoning, contribution).
+4. In PDF mode, select a passage, choose a sentiment, and the viewer renders a coloured annotation while the side panel opens the full highlight form; finish by recording final thoughts and next steps in the summary modal.
+5. Every highlight, summary, and ranking is persisted via `/sessions/{id}/documents/{doc}/highlights`, `/summary`, etc., reflected live in the “Saved Notes” panel, and can be exported as structured JSON through `/export/{id}`.
 
 ## Repository Layout
 
@@ -31,7 +31,7 @@ This milestone delivers the full HTML + PDF annotation loop:
 - `docs/`
   - `README.md` — High-level overview (this file).
   - `RUN_LOCAL.md` — Step-by-step run book.
-  - `PDF_ASSETS.md` — 下载并放置 pdf.js 依赖的说明。
+  - `PDF_ASSETS.md` — Instructions for downloading and placing the pdf.js dependencies.
   - `sample_export.json` — Example export payload captured from a real session.
 - `.env.example` — Template for local environment variables.
 - `.gitignore` — Common ignore rules for Python, Node, and macOS.
