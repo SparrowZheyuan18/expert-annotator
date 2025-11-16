@@ -1,11 +1,22 @@
 from __future__ import annotations
 
+import json
+import logging
 import os
+import re
 from typing import Any, Dict, List, Literal, Optional, Union
+from urllib.parse import urlparse
 
+import httpx
+import litellm
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, status, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, validator
+
+load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 try:  # Allow running both as package and module
     from storage import (
@@ -158,7 +169,7 @@ SelectorType = Union[TextQuoteSelector, PDFTextSelector]
 class HighlightCreateRequest(BaseModel):
     text: str
     selector: SelectorType
-    ai_suggestions: List[str]
+    ai_suggestions: List["AISuggestionItem"] = Field(default_factory=list)
     user_judgment: UserJudgment
     context: Optional[str] = None
 
@@ -168,19 +179,28 @@ class HighlightResponse(BaseModel):
     text: str
     context: Optional[str] = None
     selector: SelectorType
-    ai_suggestions: List[str]
+    ai_suggestions: List["AISuggestionItem"] = Field(default_factory=list)
     user_judgment: UserJudgment
     timestamp: str
+
+
+class AISuggestionItem(BaseModel):
+    title: str
+    detail: str
 
 
 class AISuggestionsRequest(BaseModel):
     query: Optional[str] = None
     doc_meta: Optional[Dict[str, Any]] = None
     highlight_text: str
+    context: Optional[str] = None
+    document_text: Optional[str] = None
+    label: Optional[str] = None
+    mode: Optional[str] = None
 
 
 class AISuggestionsResponse(BaseModel):
-    suggestions: List[str]
+    suggestions: List[AISuggestionItem]
 
 
 class SearchEpisodeBase(BaseModel):
@@ -243,7 +263,7 @@ class HighlightExport(BaseModel):
     text: str
     context: Optional[str] = None
     selector: SelectorType
-    ai_suggestions: List[str]
+    ai_suggestions: List[AISuggestionItem] = Field(default_factory=list)
     user_judgment: UserJudgment
     timestamp: str
 
@@ -271,14 +291,30 @@ class SessionExport(BaseModel):
     interactions: List[Dict[str, Any]] = Field(default_factory=list)
 
 
-def _generate_mock_suggestions(highlight_text: str) -> List[str]:
+
+
+def _make_suggestion(title: str, detail: str, fallback_title: str = "Insight") -> Optional[AISuggestionItem]:
+    cleaned_detail = _clean_text(detail)
+    if not cleaned_detail:
+        return None
+    cleaned_title = _clean_text(title) or fallback_title
+    return AISuggestionItem(title=cleaned_title[:80], detail=cleaned_detail[:320])
+
+
+def _generate_mock_suggestions(highlight_text: str) -> List[AISuggestionItem]:
     snippet = highlight_text.strip().replace("\n", " ")
     truncated = snippet[:120] + ("…" if len(snippet) > 120 else "")
-    return [
-        f"Assess how this passage advances the research goal: \"{truncated}\"",
-        "Identify assumptions or evidence gaps that need validation.",
-        "Consider follow-up searches to deepen context or cross-check sources.",
+    mock_entries = [
+        ("Connect to goal", f"Assess how this passage advances the research goal: \"{truncated}\""),
+        ("Interrogate assumptions", "Identify assumptions or evidence gaps that need validation."),
+        ("Plan next read", "Consider follow-up searches to deepen context or cross-check sources."),
     ]
+    suggestions: List[AISuggestionItem] = []
+    for title, detail in mock_entries:
+        suggestion = _make_suggestion(title, detail)
+        if suggestion:
+            suggestions.append(suggestion)
+    return suggestions[:AI_SUGGESTION_COUNT]
 
 
 def _parse_selector(data: Dict[str, Any]) -> SelectorType:
@@ -289,6 +325,316 @@ def _parse_selector(data: Dict[str, Any]) -> SelectorType:
 
 
 AI_FORWARD_URL = os.getenv("AI_API_URL")
+PROVIDER_WINE = "wine"
+PROVIDER_OPENAI = "openai"
+AI_PROVIDER = os.getenv("AI_PROVIDER", PROVIDER_WINE).strip().lower()
+if AI_PROVIDER not in {PROVIDER_WINE, PROVIDER_OPENAI}:
+    AI_PROVIDER = PROVIDER_WINE
+
+def _normalize_model_name(raw_model: Optional[str], *, default: str) -> str:
+    model = raw_model or default
+    if not model.startswith("openai/"):
+        model = f"openai/{model}"
+    return model
+
+WINE_API_KEY = os.getenv("WINE_API_KEY")
+WINE_API_BASE_URL = os.getenv("WINE_API_BASE_URL") or "https://ai-gateway.andrew.cmu.edu/"
+WINE_LLM_MODEL = _normalize_model_name(os.getenv("WINE_LLM_MODEL"), default="wine-gemini-2.5-flash")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_API_BASE_URL = os.getenv("OPENAI_API_BASE_URL") or "https://api.openai.com/v1"
+OPENAI_LLM_MODEL = _normalize_model_name(os.getenv("OPENAI_MODEL"), default="gpt-4.1")
+try:
+    AI_SUGGESTION_COUNT = max(1, int(os.getenv("AI_SUGGESTION_COUNT", "3")))
+except ValueError:
+    AI_SUGGESTION_COUNT = 3
+try:
+    AI_REQUEST_TIMEOUT = float(os.getenv("AI_REQUEST_TIMEOUT", "30"))
+except ValueError:
+    AI_REQUEST_TIMEOUT = 30.0
+
+DEFAULT_SUGGESTION_SYSTEM_PROMPT = (
+    "You are the expert's inner monologue during a deep-research annotation workflow. "
+    "Use the provided user label (thumbsup, thumbsdown, etc.) to decide whether you plan to lean in or walk away, "
+    "and speak in the first person to defend that instinct. "
+    f"Return JSON ONLY: an array containing exactly {AI_SUGGESTION_COUNT} objects. "
+    "Each object must include `title` (<=5 words, short theme) and `detail` (<=35 words, first-person rationale). "
+    "Do not add numbering, bullets, or commentary outside the JSON array."
+)
+
+
+def _extract_site_from_meta(doc_meta: Dict[str, Any]) -> Optional[str]:
+    site = doc_meta.get("site")
+    if site:
+        return site
+    url = doc_meta.get("url")
+    if not url:
+        return None
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return None
+    return parsed.hostname
+
+
+def _normalise_mode(payload: AISuggestionsRequest) -> str:
+    doc_meta = payload.doc_meta or {}
+    raw_mode = payload.mode or doc_meta.get("type")
+    if isinstance(raw_mode, str):
+        lowered = raw_mode.lower()
+        if lowered in {"html", "pdf"}:
+            return lowered
+    return "html"
+
+
+def _clean_text(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _build_highlight_prompt(payload: AISuggestionsRequest) -> str:
+    doc_meta = payload.doc_meta or {}
+    mode = _normalise_mode(payload)
+    site = _extract_site_from_meta(doc_meta) or "unknown"
+    title = doc_meta.get("title") or "Untitled document"
+    url = doc_meta.get("url") or "N/A"
+    label = payload.label or doc_meta.get("label") or doc_meta.get("sentiment") or "unspecified"
+    highlight = _clean_text(payload.highlight_text)
+    context = _clean_text(payload.context)
+    document_text = _clean_text(payload.document_text)
+    query = _clean_text(payload.query)
+
+    if mode == "pdf":
+        scenario = (
+            "You are already reading the PDF in depth. Offer concise reviewer-style comments about the passage, "
+            "covering how it affects understanding of the paper's claims, methods, or open questions."
+        )
+    else:
+        scenario = (
+            "You are triaging web/search results during deep research. Explain why you would or would not keep reading "
+            "this paper, referencing author credibility, topic alignment, novelty, or gaps."
+        )
+
+    voice = (
+        'Use a first-person voice such as "I want to read this because..." or '
+        '"I might skip this because...". Each statement should feel like an expert thinking aloud.'
+    )
+
+    sections = [
+        f"Mode: {mode.upper()}",
+        f"Site: {site}",
+        f"Document title: {title}",
+        f"Document URL: {url}",
+        f"User label: {label}",
+        "Focus guidance:\nGround each insight directly in the highlighted snippet; use the provided context only to clarify or extend that reasoning.",
+        f"Scenario guidance:\n{scenario}",
+        f"Voice guidance:\n{voice}",
+        f"Highlighted passage:\n{highlight}",
+    ]
+    if context:
+        sections.append(f"Local context:\n{context}")
+    if mode == "pdf" and document_text:
+        sections.append(f"Full document text:\n{document_text}")
+    elif document_text:
+        sections.append(f"Additional document text:\n{document_text}")
+    if query:
+        sections.append(f"Active search query: {query}")
+    return "\n\n".join(sections)
+
+
+def _extract_suggestions_from_content(content: str) -> List[AISuggestionItem]:
+    raw = content.strip()
+    if not raw:
+        return []
+
+    def _strip_first_code_fence(value: str) -> str:
+        fence_pattern = re.compile(r"```(?:[\w+-]+)?\s*(.*?)\s*```", re.S)
+        match = fence_pattern.search(value)
+        if match:
+            return match.group(1).strip()
+        return value
+
+    def _extract_json_fragment(value: str) -> Optional[Any]:
+        decoder = json.JSONDecoder()
+        for match in re.finditer(r"[\{\[]", value):
+            try:
+                fragment, _ = decoder.raw_decode(value[match.start():])
+                return fragment
+            except json.JSONDecodeError:
+                continue
+        return None
+
+    def _try_parse(candidate: str) -> Optional[List[AISuggestionItem]]:
+        try:
+            parsed = json.loads(candidate)
+            normalized = _normalize_suggestion_entries(parsed)
+            if normalized:
+                return normalized
+        except json.JSONDecodeError:
+            fragment = _extract_json_fragment(candidate)
+            if fragment is not None:
+                normalized = _normalize_suggestion_entries(fragment)
+                if normalized:
+                    return normalized
+        return None
+
+    stripped = _strip_first_code_fence(raw)
+    for candidate in [stripped, raw]:
+        normalized = _try_parse(candidate)
+        if normalized:
+            return normalized
+    lines = raw.splitlines()
+    suggestions: List[AISuggestionItem] = []
+    fallback_index = 0
+    for raw_line in lines:
+        cleaned = re.sub(r"^[\-\*\d\)\.\s]+", "", raw_line).strip()
+        if not cleaned:
+            continue
+        suggestion = _parse_suggestion_line(cleaned, fallback_index)
+        if suggestion:
+            suggestions.append(suggestion)
+            fallback_index += 1
+        if len(suggestions) >= AI_SUGGESTION_COUNT:
+            break
+    if not suggestions:
+        fallback = _make_suggestion("Key insight", raw)
+        if fallback:
+            suggestions.append(fallback)
+    return suggestions[:AI_SUGGESTION_COUNT]
+
+
+def _parse_suggestion_line(text: str, index: int) -> Optional[AISuggestionItem]:
+    separators = ("::", "—", " - ", ":", "-")
+    for separator in separators:
+        if separator in text:
+            title, detail = text.split(separator, 1)
+            return _make_suggestion(title, detail, fallback_title=f"Idea {index + 1}")
+    return _make_suggestion(f"Idea {index + 1}", text, fallback_title=f"Idea {index + 1}")
+
+
+def _normalize_suggestion_entries(raw: Any) -> List[AISuggestionItem]:
+    if not raw:
+        return []
+    entries = raw
+    if isinstance(entries, dict):
+        entries = [entries]
+    if isinstance(entries, str):
+        return _extract_suggestions_from_content(entries)
+    suggestions: List[AISuggestionItem] = []
+    if not isinstance(entries, list):
+        return suggestions
+    for idx, entry in enumerate(entries):
+        if isinstance(entry, AISuggestionItem):
+            suggestions.append(entry)
+        elif isinstance(entry, dict):
+            candidate = _make_suggestion(
+                entry.get("title") or entry.get("heading") or entry.get("label") or f"Idea {idx + 1}",
+                entry.get("detail") or entry.get("text") or entry.get("body") or entry.get("description") or "",
+                fallback_title=f"Idea {idx + 1}",
+            )
+            if candidate:
+                suggestions.append(candidate)
+        elif isinstance(entry, str):
+            line_suggestions = _extract_suggestions_from_content(entry)
+            suggestions.extend(line_suggestions)
+        if len(suggestions) >= AI_SUGGESTION_COUNT:
+            break
+    return suggestions[:AI_SUGGESTION_COUNT]
+
+
+async def _forward_suggestions(payload: AISuggestionsRequest) -> List[AISuggestionItem]:
+    if not AI_FORWARD_URL:
+        return []
+    try:
+        async with httpx.AsyncClient(timeout=AI_REQUEST_TIMEOUT) as client:
+            response = await client.post(
+                AI_FORWARD_URL,
+                json={
+                    "highlight_text": payload.highlight_text,
+                    "query": payload.query,
+                    "doc_meta": payload.doc_meta,
+                    "context": payload.context,
+                    "document_text": payload.document_text,
+                    "label": payload.label,
+                    "mode": payload.mode,
+                },
+            )
+            response.raise_for_status()
+    except httpx.HTTPError as exc:
+        logger.warning("AI forward request failed: %s", exc)
+        return []
+    data = response.json()
+    return _normalize_suggestion_entries(data.get("suggestions"))
+
+
+async def _request_litellm_suggestions(
+    *,
+    api_key: Optional[str],
+    base_url: str,
+    model: str,
+    payload: AISuggestionsRequest,
+    provider_label: str,
+) -> List[AISuggestionItem]:
+    if not api_key:
+        return []
+    user_prompt = _build_highlight_prompt(payload)
+    messages = [
+        {"role": "system", "content": DEFAULT_SUGGESTION_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": (
+                f"Provide {AI_SUGGESTION_COUNT} concrete next actions.\n\n{user_prompt}"
+            ),
+        },
+    ]
+    # print(
+    #     f"[AI] {provider_label} request | model={model} temp=0.4 | messages={messages}"
+    # )
+    try:
+        response = await litellm.acompletion(
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            messages=messages,
+            temperature=0.4,
+            max_tokens=4096,
+            n=1,
+            timeout=AI_REQUEST_TIMEOUT,
+        )
+    except Exception as exc:  # litellm raises rich exceptions, but keep generic fallback
+        logger.warning("%s suggestion request failed: %s", provider_label, exc)
+        return []
+    payload_json = response
+    # print(f"[AI] {provider_label} raw response: {payload_json}")
+    choices = payload_json.get("choices") or []
+    for choice in choices:
+        message = choice.get("message") or {}
+        content = message.get("content")
+        if content:
+            suggestions = _extract_suggestions_from_content(content)
+            if suggestions:
+                return suggestions
+    return []
+
+
+async def _request_wine_suggestions(payload: AISuggestionsRequest) -> List[AISuggestionItem]:
+    return await _request_litellm_suggestions(
+        api_key=WINE_API_KEY,
+        base_url=WINE_API_BASE_URL,
+        model=WINE_LLM_MODEL,
+        payload=payload,
+        provider_label="LiteLLM/WINE",
+    )
+
+
+async def _request_openai_suggestions(payload: AISuggestionsRequest) -> List[AISuggestionItem]:
+    return await _request_litellm_suggestions(
+        api_key=OPENAI_API_KEY,
+        base_url=OPENAI_API_BASE_URL,
+        model=OPENAI_LLM_MODEL,
+        payload=payload,
+        provider_label="LiteLLM/OpenAI",
+    )
 
 
 @app.get("/healthz", response_model=HealthResponse)
@@ -352,16 +698,17 @@ async def create_highlight_endpoint(
         document_id=document_id,
         text=payload.text,
         selector=payload.selector.dict(),
-        ai_suggestions=payload.ai_suggestions,
+        ai_suggestions=[item.dict() for item in payload.ai_suggestions],
         user_judgment=payload.user_judgment.dict(exclude_none=True),
         context=payload.context,
     )
+    suggestion_items = _normalize_suggestion_entries(highlight["ai_suggestions"])
     return HighlightResponse(
         highlight_id=highlight["highlight_id"],
         text=highlight["text"],
         context=highlight.get("context"),
         selector=_parse_selector(highlight["selector"]),
-        ai_suggestions=highlight["ai_suggestions"],
+        ai_suggestions=suggestion_items,
         user_judgment=UserJudgment(**highlight["user_judgment"]),
         timestamp=highlight["timestamp"],
     )
@@ -369,25 +716,15 @@ async def create_highlight_endpoint(
 
 @app.post("/ai/suggestions", response_model=AISuggestionsResponse)
 async def ai_suggestions_endpoint(payload: AISuggestionsRequest) -> AISuggestionsResponse:
+    suggestions: List[AISuggestionItem] = []
     if AI_FORWARD_URL:
-        import httpx
-
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                AI_FORWARD_URL,
-                json={
-                    "highlight_text": payload.highlight_text,
-                    "query": payload.query,
-                    "doc_meta": payload.doc_meta,
-                },
-                timeout=30,
-            )
-            response.raise_for_status()
-            data = response.json()
-        suggestions = data.get("suggestions") or []
-        if not suggestions:
-            suggestions = _generate_mock_suggestions(payload.highlight_text)
-    else:
+        suggestions = await _forward_suggestions(payload)
+    if not suggestions:
+        if AI_PROVIDER == PROVIDER_WINE:
+            suggestions = await _request_wine_suggestions(payload)
+        elif AI_PROVIDER == PROVIDER_OPENAI:
+            suggestions = await _request_openai_suggestions(payload)
+    if not suggestions:
         suggestions = _generate_mock_suggestions(payload.highlight_text)
     return AISuggestionsResponse(suggestions=suggestions)
 
@@ -490,12 +827,13 @@ async def update_highlight_endpoint(highlight_id: str, payload: HighlightUpdateR
     updated = update_highlight_user_judgment(highlight_id, payload.user_judgment.dict(exclude_none=True))
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Highlight not found")
+    suggestion_items = _normalize_suggestion_entries(updated["ai_suggestions"])
     return HighlightResponse(
         highlight_id=updated["highlight_id"],
         text=updated["text"],
         context=updated.get("context"),
         selector=_parse_selector(updated["selector"]),
-        ai_suggestions=updated["ai_suggestions"],
+        ai_suggestions=suggestion_items,
         user_judgment=UserJudgment(**updated["user_judgment"]),
         timestamp=updated["timestamp"],
     )
@@ -557,7 +895,7 @@ async def export_session(session_id: str) -> SessionExport:
                 text=hl["text"],
                 context=hl.get("context"),
                 selector=_parse_selector(hl["selector"]),
-                ai_suggestions=hl["ai_suggestions"],
+                ai_suggestions=_normalize_suggestion_entries(hl["ai_suggestions"]),
                 user_judgment=UserJudgment(**hl["user_judgment"]),
                 timestamp=hl["timestamp"],
             )

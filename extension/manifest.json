@@ -40,7 +40,9 @@
     {
       "resources": [
         "vendor/pdf.min.js",
-        "vendor/pdf.worker.min.js"
+        "vendor/pdf.worker.min.js",
+        "assets/thumb-up.png",
+        "assets/thumb-down.png"
       ],
       "matches": [
         "<all_urls>"

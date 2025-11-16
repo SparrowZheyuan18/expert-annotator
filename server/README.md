@@ -14,7 +14,7 @@ SQLite is used for persistence (`server/expert_annotator.db`). Tables are create
 - `POST /sessions/{session_id}/interactions` — Record lightweight user interactions (e.g., opening a search result).
 - `POST /sessions/{session_id}/documents/{document_id}/summary` — Save final thoughts / next steps for a document (populates `global_judgment`).
 - `POST /sessions/{session_id}/complete` — Mark a session as finished and stamp the `end_time`.
-- `POST /ai/suggestions` — Mock endpoint returning three canned suggestions. Set `AI_API_URL` in the environment to proxy to a real service instead.
+- `POST /ai/suggestions` — Returns LiteLLM-backed suggestions (WINE or OpenAI, depending on `AI_PROVIDER`) when the matching API key is set, can proxy to custom services via `AI_API_URL`, and otherwise falls back to canned copy.
 - `GET /export/{session_id}` — Full session export containing session metadata, documents (with highlights & summaries), search episodes, and recorded interactions.
 
 Example: creating a PDF highlight
@@ -66,3 +66,11 @@ CORS is enabled for:
 - Any Chrome extension origin (`chrome-extension://*`)
 
 Adjust `allowed_origins` or `allow_origin_regex` in `server/main.py` if additional origins are required.
+
+## AI Suggestions Configuration
+
+The backend loads `.env` automatically (via `python-dotenv`) and supports multiple ways to configure `/ai/suggestions`:
+
+- Set `AI_PROVIDER` to `wine` (default) or `openai`, and supply the matching credentials (`WINE_API_KEY`/`WINE_API_BASE_URL`/`WINE_LLM_MODEL` or `OPENAI_API_KEY`/`OPENAI_API_BASE_URL`/`OPENAI_MODEL`). Model names automatically receive the `openai/` prefix to satisfy the upstream API contract, and the server keeps the key backend-only.
+- Alternatively, set `AI_API_URL` to forward the raw highlight/query payload to another internal service that returns `{ "suggestions": [...] }`.
+- If neither is provided, the API responds with three deterministic template suggestions to keep the workflow usable in demos/tests.

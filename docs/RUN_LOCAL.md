@@ -44,5 +44,5 @@
 
 - CORS is enabled for `http://localhost`, `http://127.0.0.1`, `http://127.0.0.1:8000`, and `chrome-extension://*` origins in `server/main.py`.
 - Update `.env` (copy from `.env.example`) if additional configuration is needed.
-- Optional: set `AI_API_URL` in `.env` to proxy `/ai/suggestions` to a real service; otherwise the backend returns mock copy.
+- Optional: set `AI_PROVIDER` to `wine` (default) or `openai` and provide the matching credentials (`WINE_API_KEY`/`WINE_LLM_MODEL` or `OPENAI_API_KEY`/`OPENAI_MODEL`) so the backend uses LiteLLM to call your preferred OpenAI-compatible gateway for `/ai/suggestions`. Model names automatically gain the `openai/` prefix for API compatibility. You can still provide an `AI_API_URL` if you prefer forwarding to a different service.
 - 将 pdf.js 的 `pdf.min.js` 和 `pdf.worker.min.js` 复制到 `extension/vendor/` 目录（参见 `extension/vendor/README.md`）。扩展会从本地加载这些文件以支持 PDF 渲染。

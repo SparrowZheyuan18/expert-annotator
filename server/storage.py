@@ -102,7 +102,7 @@ def create_highlight(
     document_id: str,
     text: str,
     selector: Dict[str, Any],
-    ai_suggestions: List[str],
+    ai_suggestions: List[Dict[str, Any]],
     user_judgment: Dict[str, Any],
     context: Optional[str] = None,
 ) -> Dict[str, Any]:

@@ -35,3 +35,13 @@ This milestone delivers the full HTML + PDF annotation loop:
   - `sample_export.json` — Example export payload captured from a real session.
 - `.env.example` — Template for local environment variables.
 - `.gitignore` — Common ignore rules for Python, Node, and macOS.
+
+## LiteLLM Suggestions
+
+Set up real AI assistance without exposing secrets inside the Chrome extension:
+
+1. Copy `.env.example` to `.env`, choose an `AI_PROVIDER` (`wine` by default, set to `openai` for direct OpenAI access), and provide the matching credentials: `WINE_API_KEY`/`WINE_API_BASE_URL`/`WINE_LLM_MODEL` for the WINE gateway or `OPENAI_API_KEY`/`OPENAI_API_BASE_URL`/`OPENAI_MODEL` for OpenAI. Model names automatically gain the `openai/` prefix so they remain compatible with OpenAI-style gateways; defaults target `openai/wine-gemini-2.5-flash` and `openai/gpt-4.1`.
+2. Restart the FastAPI server — it now loads `.env` automatically and keeps the key on the backend only.
+3. When you highlight HTML or PDF passages, the extension still calls `/ai/suggestions`, but the server now uses LiteLLM to call whichever provider you selected and returns three actionable research follow-ups to the UI.
+
+Because the key never ships with the extension bundle, end users cannot inspect or tamper with it from Chrome DevTools. You can still set `AI_API_URL` to proxy requests elsewhere if desired.

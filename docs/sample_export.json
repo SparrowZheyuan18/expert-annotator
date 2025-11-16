@@ -24,9 +24,18 @@
             "suffix": " according to early budget notes."
           },
           "ai_suggestions": [
-            "Capture why this policy is worth a deeper read.",
-            "Note funding or equity constraints to verify later.",
-            "Decide whether the linked PDF warrants immediate review."
+            {
+              "title": "Capture value",
+              "detail": "Capture why this policy is worth a deeper read."
+            },
+            {
+              "title": "Equity gaps",
+              "detail": "Note funding or equity constraints to verify later."
+            },
+            {
+              "title": "Next document",
+              "detail": "Decide whether the linked PDF warrants immediate review."
+            }
           ],
           "user_judgment": {
             "chosen_label": "Search Result",
@@ -81,9 +90,18 @@
             ]
           },
           "ai_suggestions": [
-            "Note assumptions behind the 1.6\u2103 estimate for follow-up.",
-            "Capture any equity or maintenance challenges mentioned nearby.",
-            "Consider whether this result supports the pilot shortlisted earlier."
+            {
+              "title": "Validate impact",
+              "detail": "Note assumptions behind the 1.6\u2103 estimate for follow-up."
+            },
+            {
+              "title": "Equity check",
+              "detail": "Capture any equity or maintenance challenges mentioned nearby."
+            },
+            {
+              "title": "Link to pilot",
+              "detail": "Consider whether this result supports the pilot shortlisted earlier."
+            }
           ],
           "user_judgment": {
             "chosen_label": "PDF Highlight",

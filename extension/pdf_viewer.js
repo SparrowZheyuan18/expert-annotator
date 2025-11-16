@@ -43,10 +43,10 @@ if (window.__EA_PDF_VIEWER_LOADED__) {
     const pendingHighlightQueue = new Map(); // page -> raw rects awaiting viewport
     let highlightActionPopover = null;
     let highlightActionTarget = null;
+    const pdfPageTexts = new Map(); // page -> text content
     const DEFAULT_PDF_SENTIMENT = "thumbsup";
     const PDF_REVIEW_SENTIMENTS = [
       { value: "thumbsup", label: "Thumbs up" },
-      { value: "neutral_information", label: "Neutral information" },
       { value: "thumbsdown", label: "Thumbs down" },
     ];
     const PDF_SENTIMENT_ALIAS_MAP = {
@@ -67,6 +67,46 @@ if (window.__EA_PDF_VIEWER_LOADED__) {
       "generate new search": "neutral_information",
       "search result": "neutral_information",
     };
+    const SENTIMENT_ICON_FILES = {
+      thumbsup: "assets/thumb-up.png",
+      thumbsdown: "assets/thumb-down.png",
+    };
+    const PDF_CONTEXT_CHAR_LIMIT = 800;
+
+    function getSentimentIconUrl(type) {
+      const file = SENTIMENT_ICON_FILES[type] || SENTIMENT_ICON_FILES.thumbsup;
+      try {
+        if (chrome?.runtime?.getURL) {
+          return chrome.runtime.getURL(file);
+        }
+      } catch (error) {
+        console.debug("PDF viewer: asset resolution failed", error);
+      }
+      return file;
+    }
+
+    function createSentimentIcon(type, label) {
+      const img = document.createElement("img");
+      img.className = "ea-sentiment-button__icon";
+      img.src = getSentimentIconUrl(type);
+      img.alt = label || type;
+      img.setAttribute("draggable", "false");
+      return img;
+    }
+
+    function buildContextPreview(text = "") {
+      if (!text) {
+        return "";
+      }
+      const trimmed = text.trim();
+      if (!trimmed) {
+        return "";
+      }
+      if (trimmed.length <= PDF_CONTEXT_CHAR_LIMIT) {
+        return trimmed;
+      }
+      return `${trimmed.slice(0, PDF_CONTEXT_CHAR_LIMIT - 1)}…`;
+    }
     function normalisePdfSentimentValue(rawValue) {
       if (rawValue === null || rawValue === undefined) {
         return DEFAULT_PDF_SENTIMENT;
@@ -124,6 +164,14 @@ if (window.__EA_PDF_VIEWER_LOADED__) {
       }
     }
 
+    const originalSite = (() => {
+      try {
+        return originalUrl ? new URL(originalUrl).hostname : "";
+      } catch (error) {
+        return "";
+      }
+    })();
+
     function updateDocumentMetadata() {
       if (originalUrl) {
         document.title = `${originalTitle} – Expert Annotator`;
@@ -180,6 +228,38 @@ if (window.__EA_PDF_VIEWER_LOADED__) {
       }
     }
 
+    function capturePageText(pageNumber, textContent) {
+      if (!textContent || !Array.isArray(textContent.items)) {
+        return;
+      }
+      const raw = textContent.items.map((item) => item.str || "").join(" ");
+      const normalized = raw.replace(/\s+/g, " ").trim();
+      pdfPageTexts.set(pageNumber, normalized);
+    }
+
+    function getPageText(pageNumber) {
+      return pdfPageTexts.get(pageNumber) || "";
+    }
+
+    function getDocumentText() {
+      if (currentPdf?.numPages) {
+        const segments = [];
+        for (let page = 1; page <= currentPdf.numPages; page += 1) {
+          const pageText = pdfPageTexts.get(page);
+          if (pageText) {
+            segments.push(pageText);
+          }
+        }
+        if (segments.length) {
+          return segments.join("\n\n");
+        }
+      }
+      if (pdfPageTexts.size) {
+        return Array.from(pdfPageTexts.values()).join("\n\n");
+      }
+      return "";
+    }
+
     async function renderAllPages() {
       if (!currentPdf) return;
 
@@ -206,6 +286,8 @@ if (window.__EA_PDF_VIEWER_LOADED__) {
         canvas.height = Math.floor(viewport.height * outputScale);
         canvas.style.width = `${viewport.width}px`;
         canvas.style.height = `${viewport.height}px`;
+        pageContainer.style.width = `${viewport.width}px`;
+        pageContainer.style.minHeight = `${viewport.height}px`;
         pageContainer.appendChild(canvas);
 
         const renderContext = {
@@ -222,6 +304,7 @@ if (window.__EA_PDF_VIEWER_LOADED__) {
         pageContainer.appendChild(textLayerDiv);
 
         const textContent = await page.getTextContent();
+        capturePageText(pageNumber, textContent);
         await lib.renderTextLayer({
           textContent,
           container: textLayerDiv,
@@ -368,6 +451,7 @@ if (window.__EA_PDF_VIEWER_LOADED__) {
         text: anchor.textContent || anchor.href,
       })).slice(0, 10);
 
+      const pageContext = getPageText(pageNumber);
       pendingSelection = {
         text,
         selector: {
@@ -384,6 +468,8 @@ if (window.__EA_PDF_VIEWER_LOADED__) {
         },
         links,
         sentiment: null,
+        context: buildContextPreview(pageContext),
+        documentText: getDocumentText(),
       };
 
       showSelectionToolbar({
@@ -420,10 +506,37 @@ if (window.__EA_PDF_VIEWER_LOADED__) {
     fitWidthBtn.addEventListener("click", () => setScale(computeFitScale(), { type: "fit-width" }));
     completeDocumentBtn.addEventListener("click", openSummaryModal);
 
+    let selectionCheckTimeout = null;
+    let isPointerSelecting = false;
+    function scheduleSelectionCheck(delay = 50) {
+      if (isPointerSelecting) {
+        return;
+      }
+      if (selectionCheckTimeout) {
+        clearTimeout(selectionCheckTimeout);
+      }
+      selectionCheckTimeout = window.setTimeout(() => {
+        if (!isPointerSelecting) {
+          handleSelection();
+        }
+      }, delay);
+    }
+
     document.addEventListener("selectionchange", () => {
-      setTimeout(handleSelection, 50);
+      scheduleSelectionCheck(60);
     });
-    document.addEventListener("mousedown", resetSelectionSignature);
+    document.addEventListener("mousedown", (event) => {
+      isPointerSelecting = true;
+      if (selectionCheckTimeout) {
+        clearTimeout(selectionCheckTimeout);
+        selectionCheckTimeout = null;
+      }
+      resetSelectionSignature(event);
+    });
+    document.addEventListener("mouseup", () => {
+      isPointerSelecting = false;
+      scheduleSelectionCheck(50);
+    });
     window.addEventListener("resize", handleResize);
     window.addEventListener("beforeunload", () => {
       pdfjsLoaderPromise = null;
@@ -461,28 +574,28 @@ if (window.__EA_PDF_VIEWER_LOADED__) {
       const toolbar = document.createElement("div");
       toolbar.className = "highlight-toolbar";
 
-      const sentimentSelect = document.createElement("select");
-      sentimentSelect.className = "highlight-toolbar__select";
-      const placeholderOpt = document.createElement("option");
-      placeholderOpt.value = "";
-      placeholderOpt.textContent = "Select sentiment";
-      placeholderOpt.disabled = true;
-      placeholderOpt.selected = true;
-      sentimentSelect.appendChild(placeholderOpt);
+      const sentimentButtons = document.createElement("div");
+      sentimentButtons.className = "highlight-toolbar__buttons";
+      sentimentButtons.setAttribute("role", "group");
+      sentimentButtons.setAttribute("aria-label", "Choose sentiment");
       PDF_REVIEW_SENTIMENTS.forEach((option) => {
-        const opt = document.createElement("option");
-        opt.value = option.value;
-        opt.textContent = option.label;
-        sentimentSelect.appendChild(opt);
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "highlight-toolbar__button";
+        btn.dataset.value = option.value;
+        btn.title = option.label;
+        btn.setAttribute("aria-label", option.label);
+        btn.appendChild(createSentimentIcon(option.value, option.label));
+        btn.addEventListener("click", () => {
+          if (!pendingSelection) {
+            return;
+          }
+          pendingSelection.sentiment = option.value;
+          commitPendingSelection();
+        });
+        sentimentButtons.appendChild(btn);
       });
-      sentimentSelect.addEventListener("change", () => {
-        if (!sentimentSelect.value) {
-          return;
-        }
-        pendingSelection.sentiment = sentimentSelect.value;
-        commitPendingSelection();
-      });
-      toolbar.appendChild(sentimentSelect);
+      toolbar.appendChild(sentimentButtons);
 
       toolbar.style.top = `${Math.max(position.top, 16)}px`;
       toolbar.style.left = `${position.left}px`;
@@ -536,8 +649,11 @@ if (window.__EA_PDF_VIEWER_LOADED__) {
               accessed_at: new Date().toISOString(),
               type: "pdf",
               links: pendingSelection.links,
+              site: originalSite,
             },
             local_id: localId,
+            context: pendingSelection.context || "",
+            document_text: pendingSelection.documentText || "",
           },
         },
         2
@@ -1193,7 +1309,10 @@ if (window.__EA_PDF_VIEWER_LOADED__) {
         opt.textContent = option.label;
         sentimentSelect.appendChild(opt);
       });
-      sentimentSelect.value = sentimentDefault;
+      const hasDefaultSentiment = PDF_REVIEW_SENTIMENTS.some((option) => option.value === sentimentDefault);
+      sentimentSelect.value = hasDefaultSentiment
+        ? sentimentDefault
+        : PDF_REVIEW_SENTIMENTS[0]?.value || DEFAULT_PDF_SENTIMENT;
       sentimentField.appendChild(sentimentSelect);
       modal.appendChild(sentimentField);
 

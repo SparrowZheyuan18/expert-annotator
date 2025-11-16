@@ -11,6 +11,7 @@
 
   let editHandler = null;
   let reviewHandler = null;
+  let deleteHandler = null;
 
   const containerEl = summarySection.querySelector("#highlight-list .doc-list");
   const progressLabel = document.getElementById("highlight-progress");
@@ -96,7 +97,9 @@
       selector: entry.selector || {},
       user_judgment: entry.user_judgment || {},
       ai_suggestions: entry.ai_suggestions || [],
-      context: entry.context || null,
+      context: doc.type === "pdf"
+        ? (doc.title || doc.url || entry.context || null)
+        : entry.context || null,
       documentId: doc.id,
       documentTitle: doc.title,
       documentUrl: doc.url,
@@ -141,6 +144,9 @@
     }
     const snippet = document.createElement("blockquote");
     snippet.textContent = highlight.text || "(empty snippet)";
+    if (highlight.user_judgment?.chosen_label) {
+      snippet.dataset.sentiment = highlight.user_judgment.chosen_label;
+    }
     textBlock.appendChild(snippet);
     if (highlight.page) {
       const meta = document.createElement("span");
@@ -169,6 +175,29 @@
       }
     });
     actionBlock.appendChild(editBtn);
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "danger";
+    deleteBtn.textContent = "Delete";
+    deleteBtn.addEventListener("click", async () => {
+      if (typeof deleteHandler !== "function" || deleteBtn.disabled) {
+        return;
+      }
+      const originalLabel = deleteBtn.textContent;
+      deleteBtn.disabled = true;
+      deleteBtn.textContent = "Deleting…";
+      try {
+        await deleteHandler(highlight);
+      } catch (error) {
+        console.error("Failed to delete highlight", error);
+      } finally {
+        if (deleteBtn.isConnected) {
+          deleteBtn.disabled = false;
+          deleteBtn.textContent = originalLabel;
+        }
+      }
+    });
+    actionBlock.appendChild(deleteBtn);
 
     row.appendChild(textBlock);
     row.appendChild(actionBlock);
@@ -324,6 +353,9 @@
     },
     setReviewHandler(handler) {
       reviewHandler = handler;
+    },
+    setDeleteHandler(handler) {
+      deleteHandler = handler;
     },
     updateDocumentSummary(documentId, summary) {
       const doc = state.docs.get(documentId);

@@ -13,10 +13,12 @@ const highlightSummary = window.__EA_HIGHLIGHT_SUMMARY__;
 const HTML_SENTIMENT_OPTIONS = [
   { value: "thumbsup", label: "Thumbs up" },
   { value: "thumbsdown", label: "Thumbs down" },
-  { value: "neutral_information", label: "Neutral information" },
 ];
 
-const SENTIMENT_CANONICALS = new Set(HTML_SENTIMENT_OPTIONS.map((option) => option.value));
+const SENTIMENT_CANONICALS = new Set([
+  ...HTML_SENTIMENT_OPTIONS.map((option) => option.value),
+  "neutral_information",
+]);
 const SENTIMENT_ALIAS_MAP = {
   "thumbs up": "thumbsup",
   "👍": "thumbsup",
@@ -35,6 +37,110 @@ const LEGACY_PDF_SENTIMENT_MAP = {
   "search result": "neutral_information",
 };
 const DEFAULT_PDF_SENTIMENT = "thumbsup";
+const AI_SUGGESTION_PLACEHOLDER =
+  "Explain why this snippet matters (edit an AI-suggested rationale!)";
+const AI_SUGGESTION_LOADING_COUNT = 3;
+
+function truncateTextForSuggestions(text = "", maxLength = 160) {
+  const trimmed = String(text || "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength - 1)}…` : trimmed;
+}
+
+function normalizeAiSuggestionEntry(entry, index = 0) {
+  if (!entry) {
+    return null;
+  }
+  if (typeof entry === "object") {
+    const titleCandidate = String(
+      entry.title || entry.heading || entry.label || entry.topic || ""
+    ).trim();
+    const detailCandidate = String(
+      entry.detail || entry.text || entry.body || entry.description || entry.content || ""
+    ).trim();
+    if (!detailCandidate) {
+      return null;
+    }
+    return {
+      title: titleCandidate || `Idea ${index + 1}`,
+      detail: detailCandidate,
+    };
+  }
+  if (typeof entry === "string") {
+    const trimmed = entry.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const separators = ["::", "—", " - ", ":", "-"];
+    for (const separator of separators) {
+      const sepIndex = trimmed.indexOf(separator);
+      if (sepIndex > 0) {
+        const proposedTitle = trimmed.slice(0, sepIndex).trim();
+        const proposedDetail = trimmed.slice(sepIndex + separator.length).trim();
+        if (proposedDetail) {
+          return {
+            title: proposedTitle || `Idea ${index + 1}`,
+            detail: proposedDetail,
+          };
+        }
+      }
+    }
+    return {
+      title: `Idea ${index + 1}`,
+      detail: trimmed,
+    };
+  }
+  return null;
+}
+
+function normalizeAiSuggestions(entries) {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+  const normalized = [];
+  entries.forEach((entry, index) => {
+    const suggestion = normalizeAiSuggestionEntry(entry, index);
+    if (suggestion) {
+      normalized.push(suggestion);
+    }
+  });
+  return normalized;
+}
+
+function buildFallbackAiSuggestions(selectionText = "") {
+  const snippet = truncateTextForSuggestions(selectionText);
+  return [
+    {
+      title: "Explain impact",
+      detail: snippet ? `Explain why this snippet matters: "${snippet}"` : "Explain why this snippet matters.",
+    },
+    {
+      title: "Question gaps",
+      detail: "Identify assumptions, evidence gaps, or risks you should revisit.",
+    },
+    {
+      title: "Plan action",
+      detail: "Capture what you should do next based on this passage.",
+    },
+  ];
+}
+
+function buildAiSuggestionSkeletons(count = AI_SUGGESTION_LOADING_COUNT) {
+  return Array.from({ length: count }).map((_, index) => ({
+    title: `Idea ${index + 1}`,
+    detail: "",
+  }));
+}
+
+function getDisplaySuggestions(rawSuggestions, selectionText = "") {
+  const normalized = normalizeAiSuggestions(rawSuggestions);
+  if (normalized.length > 0) {
+    return normalized;
+  }
+  return buildFallbackAiSuggestions(selectionText);
+}
 
 function normaliseSentimentValue(rawValue) {
   if (rawValue === null || rawValue === undefined) {
@@ -137,6 +243,17 @@ function sentimentToOverlayColor(sentiment) {
   return "neutral";
 }
 
+function extractSiteFromUrl(url) {
+  if (!url) {
+    return "";
+  }
+  try {
+    return new URL(url).hostname;
+  } catch (error) {
+    return "";
+  }
+}
+
 if (highlightSummary) {
   highlightSummary.setEditHandler((entry) => {
     if (!entry) {
@@ -144,12 +261,16 @@ if (highlightSummary) {
     }
     openHighlightEditor(entry);
   });
+  highlightSummary.setDeleteHandler((entry) => {
+    deleteHighlightFromSummary(entry);
+  });
 }
 
 let currentSession = null;
 let documentsIndex = {};
 let currentTabInfo = { url: "", title: "" };
 let currentPdfCandidate = null;
+let activeHighlightRef = null;
 
 function derivePdfCandidate(rawUrl) {
   if (!rawUrl) {
@@ -367,6 +488,100 @@ async function ensureDocument(meta) {
 
 function clearHighlights() {
   highlightContainer.innerHTML = "";
+  activeHighlightRef = null;
+}
+
+function setActiveHighlightRef(selection) {
+  activeHighlightRef = {
+    highlightId: selection.highlightId || selection.id || null,
+    localId: selection.localId || null,
+  };
+}
+
+function maybeClearActiveHighlight({ highlightId = null, localId = null } = {}) {
+  if (!activeHighlightRef) {
+    return false;
+  }
+  const matchById =
+    highlightId
+    && activeHighlightRef.highlightId
+    && activeHighlightRef.highlightId === highlightId;
+  const matchByLocal =
+    !highlightId
+    && localId
+    && activeHighlightRef.localId
+    && activeHighlightRef.localId === localId;
+  if (matchById || matchByLocal) {
+    clearHighlights();
+    return true;
+  }
+  return false;
+}
+
+function createAiSuggestionPicker(suggestions, onSelect, options = {}) {
+  const { isLoading = false } = options;
+  const wrapper = document.createElement("div");
+  wrapper.className = "ai-suggestion-picker";
+  if (isLoading) {
+    wrapper.classList.add("ai-suggestion-picker--loading");
+  }
+  const list = document.createElement("ul");
+  list.className = "ai-suggestion-list";
+  suggestions.forEach((suggestion) => {
+    const item = document.createElement("li");
+    if (isLoading) {
+      item.className = "ai-suggestion-skeleton";
+      const titleSkeleton = document.createElement("span");
+      titleSkeleton.className = "skeleton-line skeleton-line--short";
+      const detailSkeleton = document.createElement("span");
+      detailSkeleton.className = "skeleton-line skeleton-line--long";
+      item.appendChild(titleSkeleton);
+      item.appendChild(detailSkeleton);
+      list.appendChild(item);
+      return;
+    }
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "ai-suggestion-option";
+    const title = document.createElement("strong");
+    title.textContent = suggestion.title;
+    const detail = document.createElement("span");
+    detail.textContent = suggestion.detail;
+    button.appendChild(title);
+    button.appendChild(detail);
+    button.addEventListener("click", () => {
+      if (typeof onSelect === "function") {
+        onSelect(suggestion);
+      }
+    });
+    item.appendChild(button);
+    list.appendChild(item);
+  });
+  wrapper.appendChild(list);
+  return wrapper;
+}
+
+function renderAiSuggestionsContent(container, suggestions, options = {}) {
+  if (!container) {
+    return;
+  }
+  const { onSelect, isLoading = false } = options;
+  const heading = document.createElement("h3");
+  heading.textContent = "AI suggestions";
+  if (isLoading) {
+    const status = document.createElement("span");
+    status.className = "ai-suggestion-status";
+    const spinner = document.createElement("span");
+    spinner.className = "ai-suggestion-spinner";
+    status.appendChild(spinner);
+    status.append("Generating…");
+    heading.appendChild(status);
+  }
+  const helper = document.createElement("p");
+  helper.className = "ai-suggestion-helper";
+  helper.textContent = AI_SUGGESTION_PLACEHOLDER;
+  const picker = createAiSuggestionPicker(suggestions, onSelect, { isLoading });
+  container.replaceChildren(heading, helper, picker);
 }
 
 function renderHighlightCard(selection, documentMeta) {
@@ -379,12 +594,12 @@ function renderHighlightCard(selection, documentMeta) {
   const capturedAtEl = fragment.querySelector(".captured-at");
   const selectedTextEl = fragment.querySelector(".selected-text");
   const suggestionsSection = fragment.querySelector(".suggestions");
-  const suggestionsList = suggestionsSection.querySelector("ul");
   const linksContainer = document.createElement("div");
   linksContainer.className = "reference-links";
   const selectEl = fragment.querySelector(".label-select");
   const reasoningEl = fragment.querySelector(".reasoning-input");
   const confidenceEl = fragment.querySelector(".confidence-input");
+  const removeBtn = fragment.querySelector(".remove-btn");
   const saveBtn = fragment.querySelector(".save-btn");
   const saveStatusEl = fragment.querySelector(".save-status");
   const labelField = selectEl.closest(".field");
@@ -405,9 +620,16 @@ function renderHighlightCard(selection, documentMeta) {
       };
     }
   }
-  const existingSuggestions = Array.isArray(selection.suggestions) ? selection.suggestions : [];
+  const awaitingSuggestions = Boolean(selection.isAwaitingSuggestions);
+  const aiOptions = awaitingSuggestions
+    ? (Array.isArray(selection.suggestions) && selection.suggestions.length
+      ? selection.suggestions
+      : buildAiSuggestionSkeletons())
+    : getDisplaySuggestions(selection.suggestions, selection.text);
+  selection.suggestions = aiOptions;
   const highlightId = selection.highlightId || selection.id || null;
   const fingerprint = selection.fingerprint || null;
+  setActiveHighlightRef(selection);
   renderDocumentSummaryInfo(documentMeta);
 
   const populateSelect = (selectNode, options, preferredValue, fallbackValue) => {
@@ -435,6 +657,34 @@ function renderHighlightCard(selection, documentMeta) {
     populateSelect(selectEl, optionSet, selectedSentiment, fallbackValue);
   }
 
+  if (removeBtn) {
+    removeBtn.addEventListener("click", async () => {
+      if (removeBtn.disabled) {
+        return;
+      }
+      const originalLabel = removeBtn.textContent;
+      removeBtn.disabled = true;
+      removeBtn.textContent = "Removing…";
+      try {
+        await handleHtmlHighlightRemovalRequest(
+          {
+            highlight_id: selection.highlightId || selection.id || null,
+            local_id: selection.localId || null,
+            document_url: documentMeta.url || currentTabInfo.url || "",
+          },
+        );
+      } catch (error) {
+        console.debug("Inline highlight removal failed", error);
+        setNotice(error.message || "Failed to remove highlight.", "error");
+      } finally {
+        if (removeBtn.isConnected) {
+          removeBtn.disabled = false;
+          removeBtn.textContent = originalLabel;
+        }
+      }
+    });
+  }
+
   if (existingJudgment.confidence !== undefined && existingJudgment.confidence !== null && confidenceEl) {
     confidenceEl.value = `${existingJudgment.confidence}`;
   } else if (confidenceEl) {
@@ -448,48 +698,67 @@ function renderHighlightCard(selection, documentMeta) {
   const pageLabel = selection.selector.type === "PDFText" ? ` · Page ${selection.selector.page}` : "";
   capturedAtEl.textContent = `Accessed: ${formatDate(documentMeta.accessed_at)} · ${docTypeLabel}${pageLabel}`;
   selectedTextEl.textContent = selection.text;
-
-  if (typeof selection.context === "string" && selection.context.trim()) {
-    const contextBlock = document.createElement("div");
-    contextBlock.className = "highlight-context";
-    contextBlock.textContent = selection.context.trim();
-    card.insertBefore(contextBlock, card.querySelector(".suggestions"));
+  const sentimentForCard = selection.sentiment || existingJudgment.chosen_label || null;
+  if (sentimentForCard) {
+    selectedTextEl.dataset.sentiment = sentimentForCard;
+  } else {
+    delete selectedTextEl.dataset.sentiment;
   }
 
-  suggestionsList.innerHTML = "";
-  const aiOptions = existingSuggestions.length > 0
-    ? existingSuggestions.slice(0, 3)
-    : [
-        "Capture key takeaway from this snippet.",
-        "Note potential risks or open questions.",
-        "Identify follow-up action or research need.",
-      ];
-  const aiSelectLabel = document.createElement("label");
-  aiSelectLabel.className = "field";
-  const aiLabelSpan = document.createElement("span");
-  aiLabelSpan.className = "field-label";
-  aiLabelSpan.textContent = "AI suggestions";
-  const aiSelect = document.createElement("select");
-  aiSelect.className = "ai-suggestion-select";
-  const placeholderOption = document.createElement("option");
-  placeholderOption.value = "";
-  placeholderOption.textContent = "Select a suggestion";
-  aiSelect.appendChild(placeholderOption);
-  aiOptions.forEach((suggestion, index) => {
-    const option = document.createElement("option");
-    option.value = suggestion;
-    option.textContent = `Option ${index + 1}: ${suggestion}`;
-    aiSelect.appendChild(option);
-  });
-  aiSelect.addEventListener("change", () => {
-    if (!aiSelect.value) {
+  const contextInsertTarget = card.querySelector(".suggestions");
+  const contextValue = (() => {
+    if (isPdf) {
+      return documentMeta.title || documentMeta.url || "";
+    }
+    if (typeof selection.context === "string" && selection.context.trim()) {
+      return selection.context.trim();
+    }
+    return "";
+  })();
+  if (contextValue && contextInsertTarget) {
+    const contextBlock = document.createElement("div");
+    contextBlock.className = "highlight-context";
+    if (isPdf) {
+      contextBlock.classList.add("highlight-context--pdf");
+    }
+    contextBlock.textContent = contextValue;
+    card.insertBefore(contextBlock, contextInsertTarget);
+    selection.context = contextValue;
+  } else if (!selection.context) {
+    selection.context = null;
+  }
+
+  const applyAiSuggestion = (selectedSuggestion) => {
+    if (!selectedSuggestion || !selectedSuggestion.detail) {
       return;
     }
-    reasoningEl.value = aiSelect.value;
+    reasoningEl.value = selectedSuggestion.detail;
+  };
+  card.__applySuggestion = applyAiSuggestion;
+  card.dataset.docType = documentMeta.type || "html";
+  renderAiSuggestionsContent(suggestionsSection, aiOptions, {
+    onSelect: applyAiSuggestion,
+    isLoading: Boolean(selection.isAwaitingSuggestions),
   });
-  aiSelectLabel.appendChild(aiLabelSpan);
-  aiSelectLabel.appendChild(aiSelect);
-  suggestionsSection.replaceChildren(aiSelectLabel);
+  if (saveBtn && !saveBtn.dataset.defaultLabel) {
+    saveBtn.dataset.defaultLabel = saveBtn.textContent || "Save highlight";
+  }
+  const setAiLoadingState = (isLoading) => {
+    if (!saveBtn) {
+      return;
+    }
+    if (isLoading) {
+      saveBtn.disabled = true;
+      saveBtn.textContent = "Waiting for AI…";
+      card.classList.add("ai-suggestions-loading");
+    } else {
+      saveBtn.disabled = false;
+      saveBtn.textContent = saveBtn.dataset.defaultLabel || "Save highlight";
+      card.classList.remove("ai-suggestions-loading");
+    }
+  };
+  card.__setAiLoadingState = setAiLoadingState;
+  setAiLoadingState(Boolean(selection.isAwaitingSuggestions));
 
   if (Array.isArray(selection.links) && selection.links.length > 0) {
     const heading = document.createElement("h3");
@@ -510,8 +779,6 @@ function renderHighlightCard(selection, documentMeta) {
     card.insertBefore(linksContainer, card.querySelector(".field"));
   }
 
-  let pdfContributionTextarea = null;
-
   if (isPdf) {
     const labelTitle = labelField.querySelector(".field-label");
     if (labelTitle) {
@@ -519,25 +786,14 @@ function renderHighlightCard(selection, documentMeta) {
     }
     const reasoningLabel = reasoningField.querySelector(".field-label");
     if (reasoningLabel) {
-      reasoningLabel.textContent = "Why you want to read this";
+      reasoningLabel.textContent = "Comments";
     }
-    reasoningEl.placeholder = "Explain why this passage matters.";
-    confidenceField.style.display = "";
-    reasoningEl.value = existingJudgment.reasoning || existingSuggestions[0] || "";
-
-    pdfContributionTextarea = document.createElement("textarea");
-    pdfContributionTextarea.className = "decision-contribution-input";
-    pdfContributionTextarea.rows = 3;
-    pdfContributionTextarea.placeholder = "How does this passage influence your overall decision?";
-    const pdfContributionField = document.createElement("label");
-    pdfContributionField.className = "field";
-    const pdfContributionLabel = document.createElement("span");
-    pdfContributionLabel.className = "field-label";
-    pdfContributionLabel.textContent = "How this contributes to your decision";
-    pdfContributionField.appendChild(pdfContributionLabel);
-    pdfContributionField.appendChild(pdfContributionTextarea);
-    pdfContributionTextarea.value = existingJudgment.reading_contribution || "";
-    card.insertBefore(pdfContributionField, confidenceField);
+    reasoningEl.placeholder = "Capture how this passage shapes your understanding.";
+    if (confidenceField) {
+      confidenceField.style.display = "none";
+    }
+    const firstSuggestionDetail = selection.suggestions?.[0]?.detail || "";
+    reasoningEl.value = existingJudgment.reasoning || firstSuggestionDetail;
   } else {
     if (labelField) {
       labelField.style.display = "";
@@ -570,8 +826,6 @@ function renderHighlightCard(selection, documentMeta) {
       userJudgment = normalisePdfUserJudgment({
         chosen_label: selectEl.value,
         reasoning: reasoningEl.value.trim(),
-        confidence,
-        reading_contribution: pdfContributionTextarea?.value?.trim?.() || "",
       });
       selection.user_judgment = userJudgment;
       selection.sentiment = userJudgment.chosen_label;
@@ -609,6 +863,8 @@ function renderHighlightCard(selection, documentMeta) {
       }
       saveStatusEl.textContent = `Saved (ID: ${response.highlight_id})`;
       saveStatusEl.classList.add("success");
+      selection.highlightId = response.highlight_id;
+      setActiveHighlightRef(selection);
 
       if (documentMeta.type === "pdf" && payload.selector?.rects?.length) {
         try {
@@ -711,11 +967,13 @@ async function autoSaveHtmlHighlight(selection, documentMeta, documentId) {
     chosen_label: sentiment,
     reasoning: "",
   };
+  const aiSuggestions = getDisplaySuggestions(selection.suggestions, selection.text);
+  selection.suggestions = aiSuggestions;
 
   const payload = {
     text: selection.text,
     selector: selection.selector,
-    ai_suggestions: selection.suggestions || [],
+    ai_suggestions: aiSuggestions,
     user_judgment: userJudgment,
     context: selection.context || null,
   };
@@ -817,7 +1075,7 @@ async function handleHtmlHighlightRemovalRequest(request) {
   if (!highlightId) {
     console.debug("HTML highlight removal (local)", request);
     removeHighlightEntryById(null, localId || null);
-    clearHighlights();
+    maybeClearActiveHighlight({ highlightId: null, localId: localId || null });
     chrome.runtime.sendMessage({
       type: "HTML_HIGHLIGHT_REMOVED",
       payload: { local_id: localId || null },
@@ -837,7 +1095,7 @@ async function handleHtmlHighlightRemovalRequest(request) {
     });
     removeHighlightEntryById(highlightId, localId || null);
     await pruneHighlightFromDocuments(docUrl, highlightId, localId);
-    clearHighlights();
+    maybeClearActiveHighlight({ highlightId, localId: localId || null });
     chrome.runtime.sendMessage({
       type: "HTML_HIGHLIGHT_REMOVED",
       payload: { local_id: localId || null, highlight_id: highlightId, document_url: docUrl },
@@ -854,6 +1112,47 @@ async function handleHtmlHighlightRemovalRequest(request) {
       payload: { local_id: localId || null, highlight_id: highlightId },
     });
     setNotice(error.message || "Failed to remove highlight.", "error");
+  }
+}
+
+async function deleteHighlightFromSummary(entry) {
+  if (!entry) {
+    return;
+  }
+  await handleHtmlHighlightRemovalRequest({
+    highlight_id: entry.highlightId || entry.id || null,
+    local_id: entry.localId || null,
+    document_url: entry.documentUrl || entry.url || "",
+  });
+}
+
+function updateActiveCardSuggestions(resolvedSuggestions, options = {}) {
+  const card = highlightContainer.querySelector(".highlight-card");
+  if (!card) {
+    return;
+  }
+  const { prefillReasoning = false } = options;
+  const suggestionsSection = card.querySelector(".suggestions");
+  const applySuggestion = typeof card.__applySuggestion === "function"
+    ? card.__applySuggestion
+    : (suggestion) => {
+      const reasoningInput = card.querySelector(".reasoning-input");
+      if (reasoningInput && suggestion?.detail) {
+        reasoningInput.value = suggestion.detail;
+      }
+    };
+  renderAiSuggestionsContent(suggestionsSection, resolvedSuggestions, {
+    onSelect: applySuggestion,
+    isLoading: false,
+  });
+  if (typeof card.__setAiLoadingState === "function") {
+    card.__setAiLoadingState(false);
+  }
+  if (prefillReasoning) {
+    const reasoningEl = card.querySelector(".reasoning-input");
+    if (reasoningEl && !reasoningEl.value && resolvedSuggestions[0]?.detail) {
+      reasoningEl.value = resolvedSuggestions[0].detail;
+    }
   }
 }
 
@@ -877,43 +1176,29 @@ async function handleSelection(payload) {
     await storage.set({
       [storage.keys.DOCUMENTS]: documentsIndex,
     });
-    let suggestions = [];
-    try {
-      const suggestionsResponse = await api.request("/ai/suggestions", {
-        method: "POST",
-        body: JSON.stringify({
-          highlight_text: payload.text,
-          doc_meta: {
-            title: payload.meta.title,
-            url: payload.meta.url,
-          },
-        }),
-      });
-      if (Array.isArray(suggestionsResponse.suggestions)) {
-        suggestions = suggestionsResponse.suggestions;
-      }
-    } catch (suggestionError) {
-      console.debug("AI suggestions unavailable", suggestionError);
-    }
-
-    const selectionData = {
-      text: payload.text,
-      selector: payload.selector,
-      suggestions,
-      links: Array.isArray(payload.meta.links) ? payload.meta.links : [],
-      context: payload.context || "",
-      sentiment: payload.sentiment || null,
-      localId: payload.local_id || null,
+    const selectionContext = payload.context || "";
+    const highlightLabel =
+      payload.sentiment
+      || payload.user_judgment?.chosen_label
+      || null;
+    const documentTextForAi = docType === "pdf" ? payload.document_text || "" : "";
+    const docMetaForAi = {
+      title: payload.meta.title,
+      url: payload.meta.url,
+      type: docType,
+      site: payload.meta.site || extractSiteFromUrl(payload.meta.url),
     };
-    if (docType === "pdf") {
-      const normalizedJudgment = normalisePdfUserJudgment(payload.user_judgment || {});
-      const canonicalSentiment = ensurePdfSentiment(selectionData.sentiment || normalizedJudgment.chosen_label);
-      selectionData.sentiment = canonicalSentiment;
-      selectionData.user_judgment = {
-        ...normalizedJudgment,
-        chosen_label: canonicalSentiment,
-      };
+    if (Array.isArray(payload.meta.links) && payload.meta.links.length > 0) {
+      docMetaForAi.links = payload.meta.links;
     }
+    const aiRequestBody = {
+      highlight_text: payload.text,
+      doc_meta: docMetaForAi,
+      context: selectionContext,
+      document_text: documentTextForAi,
+      label: highlightLabel,
+      mode: docType,
+    };
 
     const documentMeta = {
       document_id: documentId,
@@ -925,7 +1210,48 @@ async function handleSelection(payload) {
       pdf_review: docRecord.pdf_review || null,
     };
 
+    const selectionData = {
+      text: payload.text,
+      selector: payload.selector,
+      suggestions: buildAiSuggestionSkeletons(),
+      links: Array.isArray(payload.meta.links) ? payload.meta.links : [],
+      context: selectionContext,
+      sentiment: payload.sentiment || payload.user_judgment?.chosen_label || null,
+      localId: payload.local_id || null,
+      isAwaitingSuggestions: true,
+      user_judgment: payload.user_judgment || null,
+    };
+    if (docType === "pdf") {
+      const normalizedJudgment = normalisePdfUserJudgment(selectionData.user_judgment || {});
+      const canonicalSentiment = ensurePdfSentiment(selectionData.sentiment || normalizedJudgment.chosen_label);
+      selectionData.sentiment = canonicalSentiment;
+      selectionData.user_judgment = {
+        ...normalizedJudgment,
+        chosen_label: canonicalSentiment,
+      };
+    }
+
     renderHighlightCard(selectionData, documentMeta);
+    setNotice("Generating AI suggestions…");
+
+    let suggestions = [];
+    try {
+      const suggestionsResponse = await api.request("/ai/suggestions", {
+        method: "POST",
+        body: JSON.stringify(aiRequestBody),
+      });
+      if (Array.isArray(suggestionsResponse.suggestions)) {
+        suggestions = suggestionsResponse.suggestions;
+      }
+    } catch (suggestionError) {
+      console.debug("AI suggestions unavailable", suggestionError);
+    }
+
+    const displaySuggestions = getDisplaySuggestions(suggestions, payload.text);
+    selectionData.suggestions = displaySuggestions;
+    selectionData.isAwaitingSuggestions = false;
+    const shouldPrefillReasoning = docType === "pdf";
+    updateActiveCardSuggestions(displaySuggestions, { prefillReasoning: shouldPrefillReasoning });
     if (docType === "pdf") {
       setNotice("Highlight key passages, capture reasoning, and save your insight.");
     } else {

@@ -39,7 +39,6 @@
   const SENTIMENT_OPTIONS = [
     { value: "thumbsup", label: "Thumbs up" },
     { value: "thumbsdown", label: "Thumbs down" },
-    { value: "neutral_information", label: "Neutral information" },
   ];
 
   let lastSentimentChoice = SENTIMENT_OPTIONS[0].value;
@@ -54,6 +53,63 @@
   const highlightRegistry = new Map(); // localId -> { element, sentiment, highlightId, documentUrl, selector, text }
   let highlightActionPopover = null;
   let highlightActionTarget = null;
+
+  const SENTIMENT_ICON_FILES = {
+    thumbsup: "assets/thumb-up.png",
+    thumbsdown: "assets/thumb-down.png",
+  };
+
+  function resolveAssetUrl(relativePath) {
+    if (!relativePath) {
+      return relativePath;
+    }
+    try {
+      if (chrome?.runtime?.getURL) {
+        return chrome.runtime.getURL(relativePath);
+      }
+    } catch (error) {
+      debugLog("Failed to resolve asset URL via runtime", error);
+    }
+    return relativePath;
+  }
+
+  function getSentimentIconUrl(type) {
+    const file = SENTIMENT_ICON_FILES[type] || SENTIMENT_ICON_FILES.thumbsup;
+    return resolveAssetUrl(file);
+  }
+
+  function createSentimentIcon(type, label) {
+    const img = document.createElement("img");
+    img.className = "ea-sentiment-button__icon";
+    img.src = getSentimentIconUrl(type);
+    img.alt = label || type;
+    img.setAttribute("draggable", "false");
+    return img;
+  }
+
+  function ensureSentimentOption(value) {
+    if (value && SENTIMENT_OPTIONS.some((option) => option.value === value)) {
+      return value;
+    }
+    return SENTIMENT_OPTIONS[0].value;
+  }
+
+  function setPopoverSentiment(popoverEl, value, { syncPending = false } = {}) {
+    if (!popoverEl) {
+      return;
+    }
+    const normalized = ensureSentimentOption(value);
+    const buttons = popoverEl.querySelectorAll(".ea-sentiment-button");
+    buttons.forEach((button) => {
+      const isActive = button.dataset.value === normalized;
+      button.classList.toggle("is-selected", isActive);
+      button.setAttribute("aria-pressed", isActive ? "true" : "false");
+    });
+    popoverEl.dataset.eaSentimentValue = normalized;
+    if (syncPending && pendingSelection) {
+      pendingSelection.sentiment = normalized;
+    }
+  }
 
   function publishPendingSelection() {
     if (!DEBUG_ENABLED) {
@@ -275,14 +331,35 @@
 .ea-popover__label span {
   font-weight: 600;
 }
-.ea-popover__select {
-  width: 100%;
-  padding: 4px 6px;
-  border-radius: 6px;
-  border: 1px solid rgba(60, 64, 67, 0.3);
-  font-size: 13px;
-  background: #ffffff;
-  color: #202124;
+.ea-sentiment-buttons {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}
+.ea-sentiment-button {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  padding: 0;
+}
+.ea-sentiment-button:focus-visible {
+  outline: 2px solid #1a73e8;
+  outline-offset: 2px;
+}
+.ea-sentiment-button.is-selected {
+  box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.35);
+  transform: translateY(-1px);
+}
+.ea-sentiment-button__icon {
+  width: 44px;
+  height: 44px;
 }
 .ea-popover__actions {
   display: flex;
@@ -403,16 +480,29 @@
     label.className = "ea-popover__label";
     const labelText = document.createElement("span");
     labelText.textContent = "Tag selection";
-    const select = document.createElement("select");
-    select.className = "ea-popover__select";
+    const buttonGroup = document.createElement("div");
+    buttonGroup.className = "ea-sentiment-buttons";
+    buttonGroup.setAttribute("role", "group");
+    buttonGroup.setAttribute("aria-label", "Choose sentiment");
     SENTIMENT_OPTIONS.forEach((option) => {
-      const opt = document.createElement("option");
-      opt.value = option.value;
-      opt.textContent = option.label;
-      select.appendChild(opt);
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "ea-sentiment-button";
+      btn.dataset.value = option.value;
+      btn.title = option.label;
+      btn.setAttribute("aria-label", option.label);
+      btn.setAttribute("aria-pressed", "false");
+      btn.appendChild(createSentimentIcon(option.value, option.label));
+      btn.addEventListener("click", () => {
+        if (!pendingSelection) {
+          return;
+        }
+        setPopoverSentiment(popoverEl, option.value, { syncPending: true });
+      });
+      buttonGroup.appendChild(btn);
     });
     label.appendChild(labelText);
-    label.appendChild(select);
+    label.appendChild(buttonGroup);
 
     const actions = document.createElement("div");
     actions.className = "ea-popover__actions";
@@ -431,23 +521,17 @@
     popoverEl.appendChild(actions);
     document.body.appendChild(popoverEl);
 
-    select.addEventListener("change", () => {
-      if (pendingSelection) {
-        pendingSelection.sentiment = select.value;
-        debugLog("Updated pending sentiment via popover", select.value);
-      }
-    });
-
     saveBtn.addEventListener("click", () => {
       if (!pendingSelection) {
         hideSelectionPopover();
         return;
       }
+      const sentimentChoice = ensureSentimentOption(pendingSelection.sentiment);
       debugLog("Popover save clicked", {
-        sentiment: select.value,
+        sentiment: sentimentChoice,
         text: pendingSelection?.text?.slice?.(0, 120),
       });
-      commitPendingSelection(select.value);
+      commitPendingSelection(sentimentChoice);
     });
 
     cancelBtn.addEventListener("click", () => {
@@ -455,6 +539,7 @@
       clearPendingSelection();
     });
 
+    setPopoverSentiment(popoverEl, SENTIMENT_OPTIONS[0].value);
     selectionPopover = popoverEl;
     debugLog("Popover created");
     return selectionPopover;
@@ -466,11 +551,8 @@
       return;
     }
     const popoverEl = ensurePopover();
-    const select = popoverEl.querySelector(".ea-popover__select");
-    if (select && pendingSelection?.sentiment) {
-      const hasOption = SENTIMENT_OPTIONS.some((option) => option.value === pendingSelection.sentiment);
-      select.value = hasOption ? pendingSelection.sentiment : SENTIMENT_OPTIONS[0].value;
-    }
+    const desiredValue = ensureSentimentOption(pendingSelection?.sentiment || lastSentimentChoice);
+    setPopoverSentiment(popoverEl, desiredValue, { syncPending: true });
     popoverEl.style.visibility = "hidden";
     popoverEl.hidden = false;
     popoverEl.style.top = "0px";
@@ -493,11 +575,14 @@
     popoverEl.style.top = `${top}px`;
     popoverEl.style.visibility = "visible";
     debugLog("Popover positioned", { left, top, rect });
-    if (select && typeof select.focus === "function") {
+    const focusTarget =
+      popoverEl.querySelector(".ea-sentiment-button.is-selected")
+      || popoverEl.querySelector(".ea-sentiment-button");
+    if (focusTarget && typeof focusTarget.focus === "function") {
       try {
-        select.focus({ preventScroll: true });
+        focusTarget.focus({ preventScroll: true });
       } catch (error) {
-        select.focus();
+        focusTarget.focus();
       }
     }
   }
@@ -583,6 +668,36 @@
     parent.removeChild(element);
   }
 
+  function escapeAttributeValue(value) {
+    if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+      return CSS.escape(value);
+    }
+    return String(value).replace(/"/g, '\\"');
+  }
+
+  function unwrapHighlightsByIdentifiers({ localId = null, highlightId = null } = {}) {
+    const matches = [];
+    const seen = new Set();
+    const selectors = [];
+    if (localId) {
+      selectors.push(`[data-ea-local-id="${escapeAttributeValue(localId)}"]`);
+    }
+    if (highlightId) {
+      selectors.push(`[data-ea-highlight-id="${escapeAttributeValue(highlightId)}"]`);
+    }
+    selectors.forEach((selector) => {
+      document.querySelectorAll(selector).forEach((node) => {
+        if (node && !seen.has(node)) {
+          matches.push(node);
+          seen.add(node);
+        }
+      });
+    });
+    matches.forEach((node) => {
+      unwrapHighlightElement(node);
+    });
+  }
+
   function requestHighlightRemoval(target) {
     const menuLocalId = highlightActionPopover?.dataset?.eaTargetLocalId || null;
     const menuHighlightId = highlightActionPopover?.dataset?.eaTargetHighlightId || null;
@@ -606,17 +721,37 @@
 
     const localId = element?.dataset?.eaLocalId || candidateLocalId || null;
     const highlightId = element?.dataset?.eaHighlightId || candidateHighlightId || null;
-    debugLog("Removing highlight", { localId, highlightId });
+    let registryEntry = localId && highlightRegistry.has(localId) ? highlightRegistry.get(localId) : null;
+    if (!registryEntry && highlightId) {
+      for (const [key, entry] of highlightRegistry.entries()) {
+        if (entry.highlightId && entry.highlightId === highlightId) {
+          registryEntry = entry;
+          break;
+        }
+      }
+    }
+    if (!element && registryEntry?.element) {
+      element = registryEntry.element;
+    }
+    debugLog("Removing highlight", { localId, highlightId, hasElement: Boolean(element) });
 
     if (element) {
       debugLog("Unwrapping highlight element", { text: element.textContent?.slice?.(0, 160) });
       unwrapHighlightElement(element);
     } else {
+      unwrapHighlightsByIdentifiers({ localId, highlightId });
       debugLog("No highlight element matched for removal");
     }
 
     if (localId && highlightRegistry.has(localId)) {
       highlightRegistry.delete(localId);
+    } else if (!localId && registryEntry) {
+      for (const [key, entry] of highlightRegistry.entries()) {
+        if (entry === registryEntry) {
+          highlightRegistry.delete(key);
+          break;
+        }
+      }
     }
 
     safeSendMessage(
@@ -732,25 +867,29 @@
       debugLog("Commit skipped: no pending selection");
       return;
     }
-    const highlightEl = applyHighlightToRange(pendingSelection.range, sentiment);
+    const normalizedSentiment = ensureSentimentOption(
+      sentiment || pendingSelection.sentiment || lastSentimentChoice
+    );
+    pendingSelection.sentiment = normalizedSentiment;
+    const highlightEl = applyHighlightToRange(pendingSelection.range, normalizedSentiment);
     let localId = null;
     if (highlightEl) {
       localId = `ea-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       highlightEl.dataset.eaContext = pendingSelection.context || "";
-      highlightEl.dataset.eaSentiment = sentiment;
+      highlightEl.dataset.eaSentiment = normalizedSentiment;
       highlightEl.dataset.eaLocalId = localId;
       highlightEl.dataset.eaDocumentUrl = window.location.href;
       attachHighlightInteractions(highlightEl);
       highlightRegistry.set(localId, {
         element: highlightEl,
-        sentiment,
+        sentiment: normalizedSentiment,
         highlightId: null,
         documentUrl: window.location.href,
         selector: pendingSelection.selector,
         text: pendingSelection.text,
       });
       debugLog("Applied highlight element", {
-        sentiment,
+        sentiment: normalizedSentiment,
         text: highlightEl.textContent?.slice?.(0, 160),
         localId,
       });
@@ -764,7 +903,7 @@
           text: pendingSelection.text,
           selector: pendingSelection.selector,
           meta: pendingSelection.meta,
-          sentiment,
+          sentiment: normalizedSentiment,
           context: pendingSelection.context,
           local_id: localId,
           signature: pendingSelection.signature,
@@ -772,8 +911,8 @@
       },
       2
     );
-    debugLog("Selection message sent", { sentiment });
-    lastSentimentChoice = sentiment;
+    debugLog("Selection message sent", { sentiment: normalizedSentiment });
+    lastSentimentChoice = normalizedSentiment;
     pendingSelection = null;
     hideSelectionPopover();
     const htmlSelection = window.getSelection();
@@ -879,6 +1018,13 @@
               url: metaUrl,
               accessed_at: new Date().toISOString(),
               type: metaType,
+              site: (() => {
+                try {
+                  return new URL(metaUrl).hostname;
+                } catch (error) {
+                  return window.location.hostname || "";
+                }
+              })(),
             },
           },
         },
@@ -909,10 +1055,9 @@
         url: window.location.href,
         accessed_at: new Date().toISOString(),
         type: "html",
+        site: window.location.hostname || "",
       },
-      sentiment: SENTIMENT_OPTIONS.some((option) => option.value === lastSentimentChoice)
-        ? lastSentimentChoice
-        : SENTIMENT_OPTIONS[0].value,
+      sentiment: ensureSentimentOption(lastSentimentChoice),
       signature,
     };
     publishPendingSelection();
@@ -1109,6 +1254,7 @@
       if (entry?.element) {
         unwrapHighlightElement(entry.element);
       }
+      unwrapHighlightsByIdentifiers({ localId: resolvedLocalId, highlightId });
       if (resolvedLocalId) {
         highlightRegistry.delete(resolvedLocalId);
       }
