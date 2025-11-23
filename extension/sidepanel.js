@@ -2,6 +2,8 @@ const { api, storage } = window.EXPERT_ANNOTATOR;
 const openJson = window.EXPERT_ANNOTATOR.openJsonInNewTab;
 
 const noticeEl = document.getElementById("notice");
+const onboardingOverlay = document.getElementById("onboarding-overlay");
+const onboardingDismissBtn = document.getElementById("onboarding-dismiss");
 const sessionInfoEl = document.getElementById("session-info");
 const highlightContainer = document.getElementById("highlight-container");
 const exportButton = document.getElementById("export-btn");
@@ -9,6 +11,9 @@ const pdfButton = document.getElementById("open-pdf-btn");
 const finishButton = document.getElementById("finish-btn");
 const template = document.getElementById("highlight-template");
 const highlightSummary = window.__EA_HIGHLIGHT_SUMMARY__;
+const trajectoryPanel = document.getElementById("trajectory-panel");
+const trajectoryListEl = document.getElementById("trajectory-list");
+const trajectoryProgressEl = document.getElementById("trajectory-progress");
 
 const HTML_SENTIMENT_OPTIONS = [
   { value: "thumbsup", label: "Thumbs up" },
@@ -243,6 +248,17 @@ function sentimentToOverlayColor(sentiment) {
   return "neutral";
 }
 
+function fingerprintFromSelector(selector) {
+  if (!selector || typeof selector !== "object") {
+    return null;
+  }
+  const rect = Array.isArray(selector.rects) && selector.rects.length ? selector.rects[0] : null;
+  if (!rect) {
+    return null;
+  }
+  return [rect.x1, rect.y1, rect.x2, rect.y2].map((value) => Number(value || 0).toFixed(2)).join(":");
+}
+
 function extractSiteFromUrl(url) {
   if (!url) {
     return "";
@@ -268,6 +284,8 @@ if (highlightSummary) {
 
 let currentSession = null;
 let documentsIndex = {};
+let trajectoryIndex = {};
+let onboardingState = {};
 let currentTabInfo = { url: "", title: "" };
 let currentPdfCandidate = null;
 let activeHighlightRef = null;
@@ -311,6 +329,53 @@ function setNotice(message, tone = "info") {
   noticeEl.hidden = !message;
 }
 
+async function markSearchTipSeen() {
+  onboardingState.searchTipSeen = true;
+  await storage.set({ [storage.keys.ONBOARDING]: onboardingState });
+}
+
+function showSearchTipOverlay() {
+  if (!onboardingOverlay || onboardingState.searchTipSeen) {
+    return;
+  }
+  onboardingOverlay.hidden = false;
+  onboardingOverlay.style.display = "flex";
+  onboardingOverlay.setAttribute("aria-hidden", "false");
+}
+
+async function hideSearchTipOverlay(markSeen = false) {
+  if (!onboardingOverlay) {
+    return;
+  }
+  onboardingOverlay.hidden = true;
+  onboardingOverlay.style.display = "none";
+  onboardingOverlay.setAttribute("aria-hidden", "true");
+  if (markSeen) {
+    try {
+      await markSearchTipSeen();
+    } catch (error) {
+      console.debug("Failed to persist onboarding state", error);
+    }
+  }
+}
+
+function ensureSearchSelectionTip() {
+  if (!currentTabInfo?.url || onboardingState.searchTipSeen) {
+    hideSearchTipOverlay();
+    return;
+  }
+  try {
+    const hostname = new URL(currentTabInfo.url).hostname.toLowerCase();
+    if (hostname.includes("scholar.google") || hostname.includes("semanticscholar")) {
+      showSearchTipOverlay();
+    } else {
+      hideSearchTipOverlay();
+    }
+  } catch (error) {
+    hideSearchTipOverlay();
+  }
+}
+
 function renderDocumentSummaryInfo(documentMeta) {
   const summarySection = document.getElementById("document-summary");
   if (summarySection) {
@@ -350,10 +415,145 @@ function formatDate(isoString) {
   }
 }
 
+function formatTimeShort(isoString) {
+  try {
+    return new Date(isoString).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch (error) {
+    return isoString;
+  }
+}
+
+function formatPlatformLabel(platform) {
+  if (!platform) {
+    return "Search";
+  }
+  if (platform === "google_scholar") {
+    return "Google Scholar";
+  }
+  if (platform === "semantic_scholar") {
+    return "Semantic Scholar";
+  }
+  return platform.replace(/_/g, " ");
+}
+
+function getTrajectoryRecord(sessionId) {
+  if (!sessionId) {
+    return { searchEpisodes: [], interactions: [] };
+  }
+  if (!trajectoryIndex[sessionId]) {
+    trajectoryIndex[sessionId] = { searchEpisodes: [], interactions: [] };
+  }
+  const entry = trajectoryIndex[sessionId];
+  if (!Array.isArray(entry.searchEpisodes)) {
+    entry.searchEpisodes = [];
+  }
+  if (!Array.isArray(entry.interactions)) {
+    entry.interactions = [];
+  }
+  return entry;
+}
+
+function persistTrajectoryIndex() {
+  storage.set({
+    [storage.keys.TRAJECTORY]: trajectoryIndex,
+  });
+}
+
+function appendTrajectorySearch(sessionId, entry, { persist = true } = {}) {
+  if (!sessionId || !entry) {
+    return;
+  }
+  const record = getTrajectoryRecord(sessionId);
+  const normalizedEntry = {
+    platform: entry.platform || "unknown",
+    query: entry.query || "",
+    timestamp: entry.timestamp || new Date().toISOString(),
+  };
+  const existing = record.searchEpisodes[0];
+  if (existing && existing.platform === normalizedEntry.platform && existing.query === normalizedEntry.query) {
+    return;
+  }
+  record.searchEpisodes = [normalizedEntry, ...record.searchEpisodes].slice(0, 50);
+  if (persist) {
+    persistTrajectoryIndex();
+  }
+  renderTrajectoryPanel();
+}
+
+function renderTrajectoryPanel() {
+  if (!trajectoryPanel || !trajectoryListEl || !trajectoryProgressEl) {
+    return;
+  }
+  const sessionId = currentSession?.session_id;
+  if (!sessionId) {
+    trajectoryPanel.hidden = true;
+    trajectoryListEl.innerHTML = "";
+    trajectoryProgressEl.textContent = "0 searches";
+    return;
+  }
+  const record = getTrajectoryRecord(sessionId);
+  const episodes = record.searchEpisodes || [];
+  trajectoryPanel.hidden = false;
+  trajectoryProgressEl.textContent = `${episodes.length} ${episodes.length === 1 ? "search" : "searches"}`;
+  if (!episodes.length) {
+    const empty = document.createElement("p");
+    empty.className = "trajectory-empty";
+    empty.textContent = "No searches recorded yet. Run a Scholar or Semantic Scholar query to build your trail.";
+    trajectoryListEl.replaceChildren(empty);
+    return;
+  }
+  const fragment = document.createDocumentFragment();
+  episodes.forEach((episode) => {
+    const entry = document.createElement("div");
+    entry.className = "trajectory-entry";
+    const meta = document.createElement("div");
+    meta.className = "trajectory-entry__meta";
+    const label = document.createElement("span");
+    label.textContent = formatPlatformLabel(episode.platform);
+    const time = document.createElement("time");
+    time.dateTime = episode.timestamp;
+    time.textContent = formatTimeShort(episode.timestamp);
+    meta.append(label, time);
+    const query = document.createElement("div");
+    query.className = "trajectory-entry__query";
+    query.textContent = episode.query || "(no query)";
+    entry.append(meta, query);
+    fragment.appendChild(entry);
+  });
+  trajectoryListEl.replaceChildren(fragment);
+}
+
 async function loadState() {
-  const stored = await storage.get([storage.keys.SESSION, storage.keys.DOCUMENTS]);
+const stored = await storage.get([
+  storage.keys.SESSION,
+  storage.keys.DOCUMENTS,
+  storage.keys.TRAJECTORY,
+  storage.keys.ONBOARDING,
+]);
   currentSession = stored[storage.keys.SESSION] || null;
   documentsIndex = stored[storage.keys.DOCUMENTS] || {};
+trajectoryIndex = stored[storage.keys.TRAJECTORY] || {};
+onboardingState = stored[storage.keys.ONBOARDING] || {};
+  let trajectoryNormalized = false;
+  Object.keys(trajectoryIndex).forEach((sessionId) => {
+    const record = trajectoryIndex[sessionId];
+    if (!record) {
+      trajectoryIndex[sessionId] = { searchEpisodes: [], interactions: [] };
+      trajectoryNormalized = true;
+      return;
+    }
+    if (!Array.isArray(record.searchEpisodes)) {
+      record.searchEpisodes = [];
+      trajectoryNormalized = true;
+    }
+    if (!Array.isArray(record.interactions)) {
+      record.interactions = [];
+      trajectoryNormalized = true;
+    }
+  });
+  if (trajectoryNormalized) {
+    persistTrajectoryIndex();
+  }
   let normalizationApplied = false;
   Object.values(documentsIndex).forEach((sessionDocs) => {
     Object.values(sessionDocs || {}).forEach((doc) => {
@@ -420,10 +620,12 @@ async function loadState() {
     sessionInfoEl.textContent = "No active session";
     exportButton.disabled = true;
     finishButton.disabled = true;
-    setNotice("Start a session from the popup before highlighting.", "error");
+    setNotice("Start a session from the popup to capture highlights.", "error");
     clearHighlights();
   }
+  renderTrajectoryPanel();
   updatePdfButtonState();
+  ensureSearchSelectionTip();
 }
 
 async function ensureDocument(meta) {
@@ -628,7 +830,8 @@ function renderHighlightCard(selection, documentMeta) {
     : getDisplaySuggestions(selection.suggestions, selection.text);
   selection.suggestions = aiOptions;
   const highlightId = selection.highlightId || selection.id || null;
-  const fingerprint = selection.fingerprint || null;
+  const fingerprint = selection.fingerprint || fingerprintFromSelector(selection.selector);
+  selection.fingerprint = fingerprint;
   setActiveHighlightRef(selection);
   renderDocumentSummaryInfo(documentMeta);
 
@@ -666,13 +869,15 @@ function renderHighlightCard(selection, documentMeta) {
       removeBtn.disabled = true;
       removeBtn.textContent = "Removing…";
       try {
-        await handleHtmlHighlightRemovalRequest(
-          {
-            highlight_id: selection.highlightId || selection.id || null,
-            local_id: selection.localId || null,
-            document_url: documentMeta.url || currentTabInfo.url || "",
-          },
-        );
+        await handleHtmlHighlightRemovalRequest({
+          highlight_id: selection.highlightId || selection.id || null,
+          local_id: selection.localId || null,
+          document_url: documentMeta.url || currentTabInfo.url || "",
+          is_pdf: isPdf,
+          page: selection.selector?.page || null,
+          fingerprint: fingerprint || null,
+          selector: selection.selector || null,
+        });
       } catch (error) {
         console.debug("Inline highlight removal failed", error);
         setNotice(error.message || "Failed to remove highlight.", "error");
@@ -1063,7 +1268,18 @@ async function savePdfDocumentReview(review) {
 }
 
 async function handleHtmlHighlightRemovalRequest(request) {
-  const { highlight_id: highlightId, local_id: localId, document_url: documentUrl } = request || {};
+  const {
+    highlight_id: highlightId,
+    local_id: localId,
+    document_url: documentUrl,
+    is_pdf: isPdfRequest,
+    page: pageInput,
+    fingerprint: fingerprintInput,
+    selector,
+  } = request || {};
+  const docUrl = documentUrl || currentTabInfo.url || "";
+  const resolvedFingerprint = fingerprintInput || fingerprintFromSelector(selector);
+  const resolvedPage = pageInput || selector?.page || null;
   if (!currentSession) {
     chrome.runtime.sendMessage({
       type: "HTML_HIGHLIGHT_REMOVE_FAILED",
@@ -1080,14 +1296,20 @@ async function handleHtmlHighlightRemovalRequest(request) {
       type: "HTML_HIGHLIGHT_REMOVED",
       payload: { local_id: localId || null },
     });
-    chrome.runtime.sendMessage({
-      type: "PDF_HIGHLIGHT_CANCELLED",
-      payload: { local_id: localId || null, url: documentUrl || currentTabInfo.url || "" },
-    });
+    if (isPdfRequest) {
+      chrome.runtime.sendMessage({
+        type: "PDF_HIGHLIGHT_CANCELLED",
+        payload: {
+          local_id: localId || null,
+          url: docUrl,
+          page: resolvedPage,
+          fingerprint: resolvedFingerprint,
+        },
+      });
+    }
     setNotice("Highlight removed.");
     return;
   }
-  const docUrl = documentUrl || currentTabInfo.url || "";
   try {
     console.debug("HTML highlight removal (saved)", request);
     await api.request(`/highlights/${highlightId}`, {
@@ -1100,10 +1322,18 @@ async function handleHtmlHighlightRemovalRequest(request) {
       type: "HTML_HIGHLIGHT_REMOVED",
       payload: { local_id: localId || null, highlight_id: highlightId, document_url: docUrl },
     });
-    chrome.runtime.sendMessage({
-      type: "PDF_HIGHLIGHT_CANCELLED",
-      payload: { local_id: localId || null, highlight_id: highlightId, url: docUrl },
-    });
+    if (isPdfRequest) {
+      chrome.runtime.sendMessage({
+        type: "PDF_HIGHLIGHT_CANCELLED",
+        payload: {
+          local_id: localId || null,
+          highlight_id: highlightId,
+          url: docUrl,
+          page: resolvedPage,
+          fingerprint: resolvedFingerprint,
+        },
+      });
+    }
     setNotice("Highlight removed.");
   } catch (error) {
     console.error("Failed to remove highlight", error);
@@ -1123,6 +1353,10 @@ async function deleteHighlightFromSummary(entry) {
     highlight_id: entry.highlightId || entry.id || null,
     local_id: entry.localId || null,
     document_url: entry.documentUrl || entry.url || "",
+    is_pdf: entry.type === "pdf" || entry.documentType === "pdf",
+    page: entry.selector?.page || entry.page || null,
+    fingerprint: entry.fingerprint || fingerprintFromSelector(entry.selector),
+    selector: entry.selector || null,
   });
 }
 
@@ -1463,6 +1697,7 @@ function updatePdfButtonState() {
     currentTabInfo = { url: tab.url || "", title: tab.title || "" };
     currentPdfCandidate = derivePdfCandidate(tab.url || "");
     pdfButton.disabled = !currentPdfCandidate;
+    ensureSearchSelectionTip();
   });
 }
 
@@ -1484,23 +1719,58 @@ pdfButton.addEventListener("click", () => {
   });
 });
 
+function dismissSearchTipOverlay() {
+  hideSearchTipOverlay(true);
+}
+
+if (onboardingDismissBtn) {
+  onboardingDismissBtn.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    dismissSearchTipOverlay();
+  });
+}
+if (onboardingOverlay) {
+  onboardingOverlay.addEventListener("click", (event) => {
+    if (event.target === onboardingOverlay) {
+      dismissSearchTipOverlay();
+    }
+  });
+}
+
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === "FORWARD_SELECTION") {
     handleSelection(message.payload);
   } else if (message.type === "SESSION_STARTED") {
     loadState();
+  } else if (message.type === "SCHOLAR_CONTEXT_DETECTED") {
+    if (!onboardingState.searchTipSeen) {
+      showSearchTipOverlay();
+    }
   } else if (message.type === "SESSION_RESET") {
     currentSession = null;
     documentsIndex = {};
+    trajectoryIndex = {};
+    onboardingState.searchTipSeen = false;
+    storage.set({ [storage.keys.ONBOARDING]: onboardingState });
     sessionInfoEl.textContent = "No active session";
     exportButton.disabled = true;
     finishButton.disabled = true;
     clearHighlights();
     setNotice("Session reset. Start a new session from the popup.", "error");
+    persistTrajectoryIndex();
+    renderTrajectoryPanel();
   } else if (message.type === "SEARCH_RECORDED") {
-    const { platform, query } = message.payload;
+    const { platform, query, timestamp } = message.payload;
     const label = platform === "google_scholar" ? "Google Scholar" : "Semantic Scholar";
     setNotice(`Recorded search on ${label}: "${query}"`);
+    if (currentSession?.session_id) {
+      appendTrajectorySearch(currentSession.session_id, {
+        platform,
+        query,
+        timestamp,
+      });
+    }
   } else if (message.type === "DOCUMENT_SUMMARY_SAVED") {
     const sessionId = currentSession?.session_id;
     if (!sessionId) {

@@ -587,9 +587,6 @@ async def _request_litellm_suggestions(
             ),
         },
     ]
-    # print(
-    #     f"[AI] {provider_label} request | model={model} temp=0.4 | messages={messages}"
-    # )
     try:
         response = await litellm.acompletion(
             api_key=api_key,
@@ -605,7 +602,6 @@ async def _request_litellm_suggestions(
         logger.warning("%s suggestion request failed: %s", provider_label, exc)
         return []
     payload_json = response
-    # print(f"[AI] {provider_label} raw response: {payload_json}")
     choices = payload_json.get("choices") or []
     for choice in choices:
         message = choice.get("message") or {}

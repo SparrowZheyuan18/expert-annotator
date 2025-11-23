@@ -22,6 +22,16 @@
     <section id="notice" class="notice" role="status" aria-live="polite">
       Start a session from the popup to capture highlights.
     </section>
+    <div id="onboarding-overlay" class="onboarding-overlay" hidden>
+      <div class="onboarding-card" role="dialog" aria-modal="true">
+        <h3>Quick Tip</h3>
+        <p>
+          When <span class="drag-highlight">dragging to select text</span> inside Google Scholar or Semantic Scholar results, hold
+          <span class="kbd">Option</span> (macOS) or <span class="kbd">Alt</span> (Windows) to select correctly.
+        </p>
+        <button id="onboarding-dismiss" class="primary" type="button">Got it</button>
+      </div>
+    </div>
 
     <section id="document-summary" class="document-summary" hidden></section>
 
@@ -34,6 +44,14 @@
         <summary>Show highlights</summary>
         <div class="doc-list"></div>
       </details>
+    </section>
+
+    <section id="trajectory-panel" class="trajectory-panel" hidden>
+      <header>
+        <strong>Research Trajectory</strong>
+        <span class="progress" id="trajectory-progress">0 searches</span>
+      </header>
+      <div class="trajectory-list" id="trajectory-list"></div>
     </section>
 
     <section id="highlight-container"></section>

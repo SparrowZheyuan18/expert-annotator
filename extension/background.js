@@ -2,6 +2,7 @@
 
 const API_BASE_URL = "http://127.0.0.1:8000";
 const lastSearchByTab = new Map();
+const TRAJECTORY_KEY = "trajectory";
 
 console.log("Expert Annotator background service worker initialized.");
 
@@ -120,17 +121,24 @@ chrome.runtime.onMessage.addListener((message, sender) => {
         platform: message.payload.platform,
         query: message.payload.query,
       });
+      const timestamp = new Date().toISOString();
       postJson(`/sessions/${session.session_id}/search-episodes`, {
         platform: message.payload.platform,
         query: message.payload.query,
-        timestamp: new Date().toISOString(),
+        timestamp,
       })
         .then(() => {
+          appendSearchEpisode(session.session_id, {
+            platform: message.payload.platform,
+            query: message.payload.query,
+            timestamp,
+          });
           chrome.runtime.sendMessage({
             type: "SEARCH_RECORDED",
             payload: {
               platform: message.payload.platform,
               query: message.payload.query,
+              timestamp,
             },
           });
         })
@@ -147,6 +155,7 @@ chrome.runtime.onMessage.addListener((message, sender) => {
       if (!session || !session.session_id) {
         return;
       }
+      const timestamp = new Date().toISOString();
       postJson(`/sessions/${session.session_id}/interactions`, {
         interaction_type: message.payload.type,
         payload: {
@@ -154,9 +163,16 @@ chrome.runtime.onMessage.addListener((message, sender) => {
           title: message.payload.title,
           context: message.payload.context,
         },
-        timestamp: new Date().toISOString(),
+        timestamp,
       }).catch((error) => {
         console.error("Failed to record interaction", error);
+      });
+      appendInteraction(session.session_id, {
+        type: message.payload.type,
+        url: message.payload.url,
+        title: message.payload.title,
+        context: message.payload.context,
+        timestamp,
       });
     });
     return;
@@ -167,7 +183,41 @@ chrome.runtime.onMessage.addListener((message, sender) => {
     return;
   }
 
+  if (message.type === "SCHOLAR_CONTEXT_DETECTED") {
+    chrome.runtime.sendMessage({ type: "SCHOLAR_CONTEXT_DETECTED" });
+    return;
+  }
+
   if (message.type === "SESSION_RESET") {
     lastSearchByTab.clear();
+    chrome.storage.local.set({ [TRAJECTORY_KEY]: {} });
   }
 });
+function updateTrajectory(sessionId, mutator) {
+  if (!sessionId) {
+    return;
+  }
+  chrome.storage.local.get([TRAJECTORY_KEY], (result) => {
+    const data = result[TRAJECTORY_KEY] || {};
+    const existing = data[sessionId] || { searchEpisodes: [], interactions: [] };
+    mutator(existing);
+    data[sessionId] = existing;
+    chrome.storage.local.set({ [TRAJECTORY_KEY]: data });
+  });
+}
+
+function appendSearchEpisode(sessionId, entry) {
+  updateTrajectory(sessionId, (existing) => {
+    const next = [entry, ...(existing.searchEpisodes || [])];
+    existing.searchEpisodes = next.slice(0, 50);
+    existing.interactions = existing.interactions || [];
+  });
+}
+
+function appendInteraction(sessionId, entry) {
+  updateTrajectory(sessionId, (existing) => {
+    const next = [entry, ...(existing.interactions || [])];
+    existing.interactions = next.slice(0, 50);
+    existing.searchEpisodes = existing.searchEpisodes || [];
+  });
+}

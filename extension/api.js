@@ -5,6 +5,8 @@ if (!window.EXPERT_ANNOTATOR) {
     const STORAGE_KEYS = {
       SESSION: "session",
       DOCUMENTS: "documents",
+      TRAJECTORY: "trajectory",
+      ONBOARDING: "onboarding",
     };
 
     async function apiRequest(path, options = {}) {

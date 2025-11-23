@@ -1078,8 +1078,20 @@
     debugLog("Handle selection complete");
   }
 
+  let scholarContextAnnounced = false;
+
+  function maybeAnnounceScholarContext(isScholarHost) {
+    if (isScholarHost && !scholarContextAnnounced) {
+      chrome.runtime.sendMessage({ type: "SCHOLAR_CONTEXT_DETECTED" });
+      scholarContextAnnounced = true;
+    } else if (!isScholarHost && scholarContextAnnounced) {
+      scholarContextAnnounced = false;
+    }
+  }
+
   function checkForSearchQuery() {
     const url = new URL(window.location.href);
+    maybeAnnounceScholarContext(/scholar\.google|semanticscholar/i.test(url.hostname));
     for (const platform of SEARCH_PLATFORMS) {
       if (!platform.matcher.test(url.hostname)) {
         continue;
