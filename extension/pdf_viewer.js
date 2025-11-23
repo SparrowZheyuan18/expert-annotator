@@ -34,6 +34,7 @@ if (window.__EA_PDF_VIEWER_LOADED__) {
     let pdfjsLoaderPromise = null;
     let currentPdf = null;
     let currentScale = 1.0;
+    let renderQueuePromise = Promise.resolve();
     let pageOriginalWidths = new Map();
     let pageViewports = new Map();
     let pendingSelection = null;
@@ -217,12 +218,12 @@ if (window.__EA_PDF_VIEWER_LOADED__) {
       currentPdf = await loadingTask.promise;
       pageOriginalWidths = new Map();
       pageViewports = new Map();
-      await renderAllPages();
+      await enqueueRender();
 
       const fitScale = computeFitScale();
       if (Math.abs(fitScale - currentScale) > 0.01) {
         currentScale = fitScale;
-        await renderAllPages();
+        await enqueueRender();
       } else {
         updateZoomLabel();
       }
@@ -260,8 +261,96 @@ if (window.__EA_PDF_VIEWER_LOADED__) {
       return "";
     }
 
-    async function renderAllPages() {
+    function clamp01(value) {
+      if (Number.isNaN(value)) return 0;
+      if (value < 0) return 0;
+      if (value > 1) return 1;
+      return value;
+    }
+
+    function getPageMetrics(pageEl) {
+      if (!pageEl) {
+        return null;
+      }
+      const top = pageEl.offsetTop || 0;
+      const height = pageEl.offsetHeight || 1;
+      return { top, height };
+    }
+
+    function captureViewerScrollState() {
+      if (!viewerEl) {
+        return null;
+      }
+      const scrollTop = viewerEl.scrollTop || 0;
+      const clientHeight = viewerEl.clientHeight || 0;
+      const scrollHeight = viewerEl.scrollHeight || 0;
+      const centerPosition = scrollTop + clientHeight / 2;
+      const relativeCenter = scrollHeight ? clamp01(centerPosition / scrollHeight) : 0;
+
+      const pages = Array.from(viewerEl.querySelectorAll(".page"));
+      if (!pages.length) {
+        return { relativeCenter };
+      }
+
+      const firstVisible =
+        pages.find((page) => {
+          const metrics = getPageMetrics(page);
+          if (!metrics) return false;
+          return metrics.top + metrics.height > scrollTop;
+        }) || pages[pages.length - 1];
+      const pageNumber = Number(firstVisible.dataset.pageNumber) || 1;
+      const metrics = getPageMetrics(firstVisible);
+      const offsetRatio = metrics ? clamp01((scrollTop - metrics.top) / metrics.height) : 0;
+
+      return { pageNumber, offsetRatio, relativeCenter };
+    }
+
+    function restoreViewerScrollState(state) {
+      if (!viewerEl || !state) {
+        return;
+      }
+      const applyScroll = () => {
+        if (state.pageNumber) {
+          const pageEl = viewerEl.querySelector(`.page[data-page-number="${state.pageNumber}"]`);
+          if (pageEl) {
+            const metrics = getPageMetrics(pageEl);
+            if (metrics) {
+              const offset = clamp01(state.offsetRatio || 0) * metrics.height;
+              viewerEl.scrollTop = metrics.top + offset;
+              return;
+            }
+          }
+        }
+        const scrollHeight = viewerEl.scrollHeight || 0;
+        const clientHeight = viewerEl.clientHeight || 0;
+        if (scrollHeight === 0) {
+          viewerEl.scrollTop = 0;
+          return;
+        }
+        const relativeCenter = clamp01(state.relativeCenter || 0);
+        const centerPosition = relativeCenter * scrollHeight;
+        const desiredTop = centerPosition - clientHeight / 2;
+        const maxScrollTop = Math.max(scrollHeight - clientHeight, 0);
+        viewerEl.scrollTop = Math.min(Math.max(desiredTop, 0), maxScrollTop);
+      };
+      if (typeof window?.requestAnimationFrame === "function") {
+        window.requestAnimationFrame(applyScroll);
+      } else {
+        applyScroll();
+      }
+    }
+
+    function enqueueRender(options = {}) {
+      renderQueuePromise = renderQueuePromise
+        .then(() => renderAllPages(options))
+        .catch((error) => console.error("PDF viewer render failed", error));
+      return renderQueuePromise;
+    }
+
+    async function renderAllPages({ preserveScroll = false } = {}) {
       if (!currentPdf) return;
+
+      const scrollState = preserveScroll ? captureViewerScrollState() : null;
 
       viewerEl.innerHTML = "";
       const lib = await ensurePdfJs();
@@ -350,6 +439,7 @@ if (window.__EA_PDF_VIEWER_LOADED__) {
       }
 
       updateZoomLabel();
+      restoreViewerScrollState(scrollState);
     }
 
     function computeFitScale() {
@@ -371,7 +461,7 @@ if (window.__EA_PDF_VIEWER_LOADED__) {
         return;
       }
       currentScale = clamped;
-      renderAllPages();
+      enqueueRender({ preserveScroll: true });
       console.debug("PDF zoom", { type, scale: currentScale });
     }
 

@@ -122,28 +122,35 @@ chrome.runtime.onMessage.addListener((message, sender) => {
         query: message.payload.query,
       });
       const timestamp = new Date().toISOString();
+      const baseEpisode = {
+        platform: message.payload.platform,
+        query: message.payload.query,
+        timestamp,
+        episode_id: `${timestamp}-${message.payload.platform}`,
+      };
       postJson(`/sessions/${session.session_id}/search-episodes`, {
         platform: message.payload.platform,
         query: message.payload.query,
         timestamp,
       })
-        .then(() => {
-          appendSearchEpisode(session.session_id, {
-            platform: message.payload.platform,
-            query: message.payload.query,
-            timestamp,
-          });
+        .then((response) => {
+          const episodeRecord = {
+            ...baseEpisode,
+            episode_id: response?.episode_id || baseEpisode.episode_id,
+          };
+          appendSearchEpisode(session.session_id, episodeRecord);
           chrome.runtime.sendMessage({
             type: "SEARCH_RECORDED",
-            payload: {
-              platform: message.payload.platform,
-              query: message.payload.query,
-              timestamp,
-            },
+            payload: episodeRecord,
           });
         })
         .catch((error) => {
           console.error("Failed to record search episode", error);
+          appendSearchEpisode(session.session_id, baseEpisode);
+          chrome.runtime.sendMessage({
+            type: "SEARCH_RECORDED",
+            payload: baseEpisode,
+          });
         });
     });
     return;
@@ -156,6 +163,14 @@ chrome.runtime.onMessage.addListener((message, sender) => {
         return;
       }
       const timestamp = new Date().toISOString();
+      const baseEntry = {
+        type: message.payload.type,
+        url: message.payload.url,
+        title: message.payload.title,
+        context: message.payload.context,
+        timestamp,
+        interaction_id: `${message.payload.type}-${timestamp}`,
+      };
       postJson(`/sessions/${session.session_id}/interactions`, {
         interaction_type: message.payload.type,
         payload: {
@@ -164,22 +179,80 @@ chrome.runtime.onMessage.addListener((message, sender) => {
           context: message.payload.context,
         },
         timestamp,
-      }).catch((error) => {
-        console.error("Failed to record interaction", error);
-      });
-      appendInteraction(session.session_id, {
-        type: message.payload.type,
-        url: message.payload.url,
-        title: message.payload.title,
-        context: message.payload.context,
-        timestamp,
-      });
+      })
+        .then((response) => {
+          const entry = {
+            ...baseEntry,
+            interaction_id: response?.interaction_id || baseEntry.interaction_id,
+          };
+          appendInteraction(session.session_id, entry);
+          chrome.runtime.sendMessage({
+            type: "TRAJECTORY_INTERACTION_RECORDED",
+            payload: entry,
+          });
+        })
+        .catch((error) => {
+          console.error("Failed to record interaction", error);
+          appendInteraction(session.session_id, baseEntry);
+          chrome.runtime.sendMessage({
+            type: "TRAJECTORY_INTERACTION_RECORDED",
+            payload: baseEntry,
+          });
+        });
     });
     return;
   }
 
   if (message.type === "OPEN_PDF_VIEWER") {
-    openPdfViewer(message.payload.url, message.payload.title || "");
+    const { url, title, source } = message.payload || {};
+    if (!url) {
+      return;
+    }
+    openPdfViewer(url, title || "");
+    if (source !== "sidepanel") {
+      return;
+    }
+    const sessionPromise = getSessionState();
+    sessionPromise.then((session) => {
+      if (!session || !session.session_id) {
+        return;
+      }
+      const timestamp = new Date().toISOString();
+      const baseEntry = {
+        type: "pdf_viewer_opened",
+        url,
+        title: title || "",
+        timestamp,
+        interaction_id: `pdf-${timestamp}`,
+      };
+      postJson(`/sessions/${session.session_id}/interactions`, {
+        interaction_type: "pdf_viewer_opened",
+        payload: {
+          url,
+          title: title || "",
+        },
+        timestamp,
+      })
+        .then((response) => {
+          const entry = {
+            ...baseEntry,
+            interaction_id: response?.interaction_id || baseEntry.interaction_id,
+          };
+          appendInteraction(session.session_id, entry);
+          chrome.runtime.sendMessage({
+            type: "TRAJECTORY_INTERACTION_RECORDED",
+            payload: entry,
+          });
+        })
+        .catch((error) => {
+          console.error("Failed to record PDF interaction", error);
+          appendInteraction(session.session_id, baseEntry);
+          chrome.runtime.sendMessage({
+            type: "TRAJECTORY_INTERACTION_RECORDED",
+            payload: baseEntry,
+          });
+        });
+    });
     return;
   }
 

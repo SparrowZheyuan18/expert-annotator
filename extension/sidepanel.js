@@ -14,6 +14,20 @@ const highlightSummary = window.__EA_HIGHLIGHT_SUMMARY__;
 const trajectoryPanel = document.getElementById("trajectory-panel");
 const trajectoryListEl = document.getElementById("trajectory-list");
 const trajectoryProgressEl = document.getElementById("trajectory-progress");
+const SEARCH_REASON_CHAR_LIMIT = 400;
+const MAX_TRAJECTORY_STEPS = 60;
+const searchReasonUiState = new Map();
+const searchReasonRequests = new Map();
+let isRenderingTrajectoryPanel = false;
+let pendingTrajectoryRender = false;
+
+function finishTrajectoryRender() {
+  isRenderingTrajectoryPanel = false;
+  if (pendingTrajectoryRender) {
+    pendingTrajectoryRender = false;
+    renderTrajectoryPanel();
+  }
+}
 
 const HTML_SENTIMENT_OPTIONS = [
   { value: "thumbsup", label: "Thumbs up" },
@@ -137,6 +151,26 @@ function buildAiSuggestionSkeletons(count = AI_SUGGESTION_LOADING_COUNT) {
     title: `Idea ${index + 1}`,
     detail: "",
   }));
+}
+
+function buildFallbackSearchReasonSuggestions(query = "") {
+  const snippet = truncateTextForSuggestions(query || "", 100);
+  return [
+    {
+      title: "Scope topic",
+      detail: snippet
+        ? `I want to see how “${snippet}” maps to our goal before diving deeper.`
+        : "I want to scope the topic before diving deeper.",
+    },
+    {
+      title: "Compare methods",
+      detail: "I need to surface methods/results I can reuse or scrutinize.",
+    },
+    {
+      title: "Check novelty",
+      detail: "I’m double-checking whether this query exposes gaps or prior art I missed.",
+    },
+  ];
 }
 
 function getDisplaySuggestions(rawSuggestions, selectionText = "") {
@@ -453,6 +487,66 @@ function getTrajectoryRecord(sessionId) {
   return entry;
 }
 
+function normalizeSearchEpisodeEntry(entry, fallbackIndex = 0) {
+  if (!entry || typeof entry !== "object") {
+    const timestamp = new Date().toISOString();
+    return {
+      id: `search-${timestamp}-${fallbackIndex}`,
+      episode_id: null,
+      platform: "unknown",
+      query: "",
+      timestamp,
+      reason: "",
+      ai_suggestions: [],
+    };
+  }
+  const timestamp = entry.timestamp || new Date().toISOString();
+  const id =
+    entry.id
+    || entry.episode_id
+    || `${entry.platform || "search"}-${timestamp}-${fallbackIndex}`;
+  const aiSuggestions = normalizeAiSuggestions(entry.ai_suggestions || []);
+  return {
+    id,
+    episode_id: entry.episode_id || null,
+    platform: entry.platform || "unknown",
+    query: entry.query || "",
+    timestamp,
+    reason: typeof entry.reason === "string" ? entry.reason : "",
+    ai_suggestions: aiSuggestions,
+  };
+}
+
+function normalizeInteractionEntry(entry, fallbackIndex = 0) {
+  if (!entry || typeof entry !== "object") {
+    const timestamp = new Date().toISOString();
+    return {
+      id: `interaction-${timestamp}-${fallbackIndex}`,
+      interaction_id: null,
+      interactionType: "interaction",
+      title: "",
+      url: "",
+      timestamp,
+      context: null,
+    };
+  }
+  const timestamp = entry.timestamp || new Date().toISOString();
+  const interactionType = entry.type || entry.interactionType || "interaction";
+  const id =
+    entry.id
+    || entry.interaction_id
+    || `${interactionType}-${timestamp}-${fallbackIndex}`;
+  return {
+    id,
+    interaction_id: entry.interaction_id || null,
+    interactionType,
+    title: entry.title || "",
+    url: entry.url || "",
+    timestamp,
+    context: entry.context || null,
+  };
+}
+
 function persistTrajectoryIndex() {
   storage.set({
     [storage.keys.TRAJECTORY]: trajectoryIndex,
@@ -464,63 +558,471 @@ function appendTrajectorySearch(sessionId, entry, { persist = true } = {}) {
     return;
   }
   const record = getTrajectoryRecord(sessionId);
-  const normalizedEntry = {
-    platform: entry.platform || "unknown",
-    query: entry.query || "",
-    timestamp: entry.timestamp || new Date().toISOString(),
-  };
-  const existing = record.searchEpisodes[0];
-  if (existing && existing.platform === normalizedEntry.platform && existing.query === normalizedEntry.query) {
+  const normalizedEntry = normalizeSearchEpisodeEntry(entry, record.searchEpisodes.length);
+  let storedEntry = null;
+  const existingIndex = record.searchEpisodes.findIndex((episode) => episode.id === normalizedEntry.id);
+  if (existingIndex >= 0) {
+    const updatedEntry = {
+      ...record.searchEpisodes[existingIndex],
+      ...normalizedEntry,
+    };
+    record.searchEpisodes[existingIndex] = updatedEntry;
+    storedEntry = record.searchEpisodes[existingIndex];
+  } else {
+    record.searchEpisodes = [normalizedEntry, ...record.searchEpisodes].slice(0, 50);
+    storedEntry = record.searchEpisodes.find((episode) => episode.id === normalizedEntry.id) || record.searchEpisodes[0];
+  }
+  if (persist) {
+    persistTrajectoryIndex();
+  }
+  renderTrajectoryPanel();
+  if (sessionId === currentSession?.session_id && storedEntry) {
+    maybeEnsureSearchReasonSuggestions(sessionId, storedEntry);
+  }
+}
+
+function appendTrajectoryInteraction(sessionId, entry, { persist = true } = {}) {
+  if (!sessionId || !entry) {
     return;
   }
-  record.searchEpisodes = [normalizedEntry, ...record.searchEpisodes].slice(0, 50);
+  const record = getTrajectoryRecord(sessionId);
+  const normalizedEntry = normalizeInteractionEntry(entry, record.interactions.length);
+  const existing = record.interactions.find((interaction) => interaction.id === normalizedEntry.id);
+  if (existing) {
+    Object.assign(existing, normalizedEntry);
+  } else {
+    record.interactions = [normalizedEntry, ...record.interactions].slice(0, 50);
+  }
   if (persist) {
     persistTrajectoryIndex();
   }
   renderTrajectoryPanel();
 }
 
+function buildTrajectorySteps(record, { limit = MAX_TRAJECTORY_STEPS, excludeId = null } = {}) {
+  const searches = (record.searchEpisodes || []).map((episode) => ({
+    ...episode,
+    entryType: "search",
+  }));
+  const interactions = (record.interactions || []).map((interaction) => ({
+    ...interaction,
+    entryType: "interaction",
+  }));
+  const combined = [...searches, ...interactions].filter((step) => !(excludeId && step.id === excludeId));
+  return combined
+    .sort((a, b) => {
+      const timeA = Date.parse(a.timestamp || "") || 0;
+      const timeB = Date.parse(b.timestamp || "") || 0;
+      return timeB - timeA;
+    })
+    .slice(0, limit);
+}
+
 function renderTrajectoryPanel() {
+  if (isRenderingTrajectoryPanel) {
+    pendingTrajectoryRender = true;
+    return;
+  }
+  isRenderingTrajectoryPanel = true;
   if (!trajectoryPanel || !trajectoryListEl || !trajectoryProgressEl) {
+    finishTrajectoryRender();
     return;
   }
   const sessionId = currentSession?.session_id;
   if (!sessionId) {
     trajectoryPanel.hidden = true;
     trajectoryListEl.innerHTML = "";
-    trajectoryProgressEl.textContent = "0 searches";
+    trajectoryProgressEl.textContent = "0 steps";
+    finishTrajectoryRender();
     return;
   }
   const record = getTrajectoryRecord(sessionId);
-  const episodes = record.searchEpisodes || [];
+  record.searchEpisodes.forEach((episode) => {
+    maybeEnsureSearchReasonSuggestions(sessionId, episode);
+  });
+  const steps = buildTrajectorySteps(record);
+  const searchCount = record.searchEpisodes.length;
+  const interactionCount = record.interactions.length;
   trajectoryPanel.hidden = false;
-  trajectoryProgressEl.textContent = `${episodes.length} ${episodes.length === 1 ? "search" : "searches"}`;
-  if (!episodes.length) {
+  const progressParts = [];
+  if (searchCount > 0) {
+    progressParts.push(`${searchCount} ${searchCount === 1 ? "search" : "searches"}`);
+  }
+  if (interactionCount > 0) {
+    progressParts.push(`${interactionCount} ${interactionCount === 1 ? "interaction" : "interactions"}`);
+  }
+  trajectoryProgressEl.textContent = progressParts.length ? progressParts.join(" · ") : "0 steps";
+  if (!steps.length) {
     const empty = document.createElement("p");
     empty.className = "trajectory-empty";
-    empty.textContent = "No searches recorded yet. Run a Scholar or Semantic Scholar query to build your trail.";
+    empty.textContent = "No steps recorded yet. Run a search or open a PDF to build your trajectory.";
     trajectoryListEl.replaceChildren(empty);
+    finishTrajectoryRender();
     return;
   }
   const fragment = document.createDocumentFragment();
-  episodes.forEach((episode) => {
-    const entry = document.createElement("div");
-    entry.className = "trajectory-entry";
-    const meta = document.createElement("div");
-    meta.className = "trajectory-entry__meta";
-    const label = document.createElement("span");
-    label.textContent = formatPlatformLabel(episode.platform);
-    const time = document.createElement("time");
-    time.dateTime = episode.timestamp;
-    time.textContent = formatTimeShort(episode.timestamp);
-    meta.append(label, time);
-    const query = document.createElement("div");
-    query.className = "trajectory-entry__query";
-    query.textContent = episode.query || "(no query)";
-    entry.append(meta, query);
-    fragment.appendChild(entry);
+  const visibleSearchIds = new Set();
+  steps.forEach((step) => {
+    let entryEl = null;
+    if (step.entryType === "search") {
+      visibleSearchIds.add(step.id);
+      entryEl = renderSearchTrajectoryEntry(step);
+    } else {
+      entryEl = renderInteractionTrajectoryEntry(step);
+    }
+    if (entryEl) {
+      fragment.appendChild(entryEl);
+    }
+  });
+  Array.from(searchReasonUiState.keys()).forEach((key) => {
+    if (!visibleSearchIds.has(key)) {
+      searchReasonUiState.delete(key);
+    }
   });
   trajectoryListEl.replaceChildren(fragment);
+  finishTrajectoryRender();
+}
+
+function renderSearchTrajectoryEntry(entry) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "trajectory-entry trajectory-entry--search";
+  wrapper.dataset.entryId = entry.id;
+  const meta = document.createElement("div");
+  meta.className = "trajectory-entry__meta";
+  const label = document.createElement("span");
+  label.textContent = formatPlatformLabel(entry.platform);
+  const time = document.createElement("time");
+  time.dateTime = entry.timestamp;
+  time.textContent = formatTimeShort(entry.timestamp);
+  meta.append(label, time);
+  const hasReason = Boolean((entry.reason || "").trim());
+  const isEditing = !!(searchReasonUiState.get(entry.id)?.editing);
+  if (hasReason && !isEditing) {
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "secondary trajectory-entry__edit";
+    editBtn.dataset.action = "edit-search-reason";
+    editBtn.dataset.entryId = entry.id;
+    editBtn.textContent = "Edit the reason";
+    meta.append(editBtn);
+  }
+  const query = document.createElement("div");
+  query.className = "trajectory-entry__query";
+  query.textContent = entry.query || "(no query)";
+  const reasonBlock = renderSearchReasonBlock(entry);
+  if (reasonBlock) {
+    wrapper.append(meta, query, reasonBlock);
+  } else {
+    wrapper.append(meta, query);
+  }
+  return wrapper;
+}
+
+function renderSearchReasonBlock(entry) {
+  const block = document.createElement("div");
+  block.className = "trajectory-search-reason";
+  const inputId = `search-reason-${entry.id}`;
+  const uiState = searchReasonUiState.get(entry.id) || {};
+  const trimmedReason = (entry.reason || "").trim();
+  const isEditing = uiState.editing || trimmedReason.length === 0;
+  if (!isEditing) {
+    return null;
+  }
+
+  const label = document.createElement("label");
+  label.className = "trajectory-search-reason__label";
+  label.textContent = "Why this search?";
+  label.setAttribute("for", inputId);
+  const suggestionsContainer = document.createElement("div");
+  suggestionsContainer.className = "trajectory-search-suggestions";
+  const displayValue = uiState.draft !== undefined ? uiState.draft : entry.reason || "";
+  const trimmedDisplayValue = displayValue.trim();
+  const shouldShowSuggestions = trimmedDisplayValue.length === 0;
+  const textarea = document.createElement("textarea");
+  textarea.id = inputId;
+  textarea.dataset.role = "search-reason-input";
+  textarea.dataset.entryId = entry.id;
+  textarea.maxLength = SEARCH_REASON_CHAR_LIMIT;
+  textarea.rows = 3;
+  textarea.placeholder = "Explain why you ran this query.";
+  textarea.value = displayValue;
+  textarea.dataset.suggestionsTarget = entry.id;
+  const helperRow = document.createElement("div");
+  helperRow.className = "trajectory-search-reason__helper";
+  const counter = document.createElement("span");
+  counter.className = "trajectory-search-reason__counter";
+  counter.textContent = `${displayValue.length}/${SEARCH_REASON_CHAR_LIMIT}`;
+  helperRow.append(counter);
+  const actions = document.createElement("div");
+  actions.className = "trajectory-search-reason__actions";
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "secondary";
+  saveBtn.dataset.action = "save-search-reason";
+  saveBtn.dataset.entryId = entry.id;
+  saveBtn.textContent = trimmedReason ? "Update note" : "Save note";
+  actions.append(saveBtn);
+  if (trimmedReason.length > 0) {
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "ghost";
+    cancelBtn.dataset.action = "cancel-search-reason";
+    cancelBtn.dataset.entryId = entry.id;
+    cancelBtn.textContent = "Cancel";
+    actions.append(cancelBtn);
+  }
+  const isLoading = Boolean(uiState.aiLoading);
+  const suggestions = Array.isArray(entry.ai_suggestions) && entry.ai_suggestions.length
+    ? entry.ai_suggestions
+    : buildFallbackSearchReasonSuggestions(entry.query);
+  const displaySuggestions = isLoading ? buildAiSuggestionSkeletons() : suggestions;
+  renderAiSuggestionsContent(suggestionsContainer, displaySuggestions, {
+    isLoading,
+    helperText: "Tap a suggestion to auto-fill this note.",
+    onSelect: (suggestion) => {
+      textarea.value = suggestion.detail;
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      textarea.focus();
+    },
+  });
+  suggestionsContainer.hidden = !shouldShowSuggestions;
+  block.append(suggestionsContainer, label, textarea, helperRow, actions);
+  return block;
+}
+
+function renderInteractionTrajectoryEntry(entry) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "trajectory-entry trajectory-entry--interaction";
+  const meta = document.createElement("div");
+  meta.className = "trajectory-entry__meta";
+  const label = document.createElement("span");
+  label.textContent = formatInteractionLabel(entry.interactionType);
+  const time = document.createElement("time");
+  time.dateTime = entry.timestamp;
+  time.textContent = formatTimeShort(entry.timestamp);
+  meta.append(label, time);
+  const description = document.createElement("div");
+  description.className = "trajectory-entry__body";
+  description.textContent = describeInteraction(entry);
+  wrapper.append(meta, description);
+  return wrapper;
+}
+
+function formatInteractionLabel(type) {
+  if (type === "pdf_viewer_opened") {
+    return "PDF Annotation";
+  }
+  if (type === "open_result") {
+    return "Result Review";
+  }
+  if (!type) {
+    return "Interaction";
+  }
+  return type.replace(/_/g, " ");
+}
+
+function describeInteraction(entry) {
+  if (entry.interactionType === "pdf_viewer_opened") {
+    const title = entry.title || entry.context?.title || entry.url;
+    return title ? `PDF mode · ${title}` : "PDF mode activated for annotation.";
+  }
+  if (entry.interactionType === "open_result") {
+    const title = entry.title || entry.url || "Search result";
+    return `Evaluating result · ${title}`;
+  }
+  if (entry.title) {
+    return `${formatInteractionLabel(entry.interactionType)} · ${entry.title}`;
+  }
+  return `${formatInteractionLabel(entry.interactionType)} noted.`;
+}
+
+function handleTrajectoryListClick(event) {
+  const actionEl = event.target.closest("[data-action]");
+  if (!actionEl) {
+    return;
+  }
+  const { action, entryId } = actionEl.dataset;
+  if (!entryId) {
+    return;
+  }
+  event.preventDefault();
+  if (action === "save-search-reason") {
+    saveSearchReason(entryId);
+  } else if (action === "edit-search-reason") {
+    openSearchReasonEditor(entryId);
+  } else if (action === "cancel-search-reason") {
+    closeSearchReasonEditor(entryId);
+  }
+}
+
+function handleTrajectoryListInput(event) {
+  const textarea = event.target.closest('textarea[data-role="search-reason-input"]');
+  if (!textarea) {
+    return;
+  }
+  const { entryId } = textarea.dataset;
+  if (!entryId) {
+    return;
+  }
+  const value = textarea.value.slice(0, SEARCH_REASON_CHAR_LIMIT);
+  if (value !== textarea.value) {
+    const caret = textarea.selectionStart;
+    textarea.value = value;
+    textarea.selectionStart = textarea.selectionEnd = Math.min(caret, value.length);
+  }
+  const state = searchReasonUiState.get(entryId) || {};
+  searchReasonUiState.set(entryId, { ...state, draft: value });
+  const counter = textarea.closest(".trajectory-search-reason")?.querySelector(".trajectory-search-reason__counter");
+  if (counter) {
+    counter.textContent = `${value.length}/${SEARCH_REASON_CHAR_LIMIT}`;
+  }
+  const suggestionsContainer = textarea.closest(".trajectory-search-reason")?.querySelector(".trajectory-search-suggestions");
+  if (suggestionsContainer) {
+    suggestionsContainer.hidden = value.trim().length > 0;
+  }
+}
+
+function getSearchEpisodeById(sessionId, entryId) {
+  if (!sessionId || !entryId) {
+    return null;
+  }
+  const record = getTrajectoryRecord(sessionId);
+  return record.searchEpisodes.find((episode) => episode.id === entryId) || null;
+}
+
+function openSearchReasonEditor(entryId) {
+  if (!entryId) {
+    return;
+  }
+  const state = searchReasonUiState.get(entryId) || {};
+  searchReasonUiState.set(entryId, { ...state, editing: true });
+  renderTrajectoryPanel();
+}
+
+function closeSearchReasonEditor(entryId) {
+  if (!entryId || !currentSession?.session_id) {
+    return;
+  }
+  const target = getSearchEpisodeById(currentSession.session_id, entryId);
+  if (!target) {
+    return;
+  }
+  const hasReason = Boolean((target.reason || "").trim());
+  if (!hasReason) {
+    return;
+  }
+  const nextState = { ...(searchReasonUiState.get(entryId) || {}) };
+  nextState.editing = false;
+  delete nextState.draft;
+  searchReasonUiState.set(entryId, nextState);
+  renderTrajectoryPanel();
+}
+
+function saveSearchReason(entryId) {
+  if (!currentSession?.session_id) {
+    setNotice("Start a session to capture search intent.", "error");
+    return;
+  }
+  const textarea = trajectoryListEl?.querySelector(`textarea[data-role="search-reason-input"][data-entry-id="${entryId}"]`);
+  if (!textarea) {
+    setNotice("Unable to locate this search input.", "error");
+    return;
+  }
+  const value = textarea.value.trim();
+  const target = getSearchEpisodeById(currentSession.session_id, entryId);
+  if (!target) {
+    setNotice("Cannot find this search entry.", "error");
+    return;
+  }
+  target.reason = value;
+  const nextState = { ...(searchReasonUiState.get(entryId) || {}) };
+  if (nextState.draft !== undefined) {
+    delete nextState.draft;
+  }
+  nextState.editing = !value;
+  searchReasonUiState.set(entryId, nextState);
+  persistTrajectoryIndex();
+  renderTrajectoryPanel();
+}
+
+function maybeEnsureSearchReasonSuggestions(sessionId, entry) {
+  if (!sessionId || !entry || sessionId !== currentSession?.session_id) {
+    return;
+  }
+  if (!currentSession) {
+    return;
+  }
+  if (Array.isArray(entry.ai_suggestions) && entry.ai_suggestions.length) {
+    return;
+  }
+  if ((entry.reason || "").trim().length > 0) {
+    return;
+  }
+  if (searchReasonRequests.has(entry.id)) {
+    return;
+  }
+  const payload = buildSearchIntentPayload(entry);
+  const request = api.request("/ai/search-intent", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  searchReasonRequests.set(entry.id, request);
+  const prevState = searchReasonUiState.get(entry.id) || {};
+  searchReasonUiState.set(entry.id, { ...prevState, aiLoading: true });
+  renderTrajectoryPanel();
+  request
+    .then((response) => {
+      const suggestions = normalizeAiSuggestions(response?.suggestions || []);
+      entry.ai_suggestions = suggestions;
+      persistTrajectoryIndex();
+    })
+    .catch((error) => {
+      console.error("Failed to generate search intent suggestions", error);
+    })
+    .finally(() => {
+      searchReasonRequests.delete(entry.id);
+      const nextState = { ...(searchReasonUiState.get(entry.id) || {}) };
+      nextState.aiLoading = false;
+      searchReasonUiState.set(entry.id, nextState);
+      renderTrajectoryPanel();
+    });
+}
+
+function buildSearchIntentPayload(entry) {
+  return {
+    query: entry.query || "",
+    platform: entry.platform === "semantic_scholar" ? "semantic_scholar" : "google_scholar",
+    research_goal: currentSession?.research_goal || currentSession?.topic || "Clarify the research goal.",
+    session_topic: currentSession?.topic || "",
+    recent_steps: buildRecentTrajectorySummaries(entry.id),
+  };
+}
+
+function buildRecentTrajectorySummaries(excludeId = null, limit = 5) {
+  if (!currentSession?.session_id) {
+    return [];
+  }
+  const record = getTrajectoryRecord(currentSession.session_id);
+  const steps = buildTrajectorySteps(record, { limit, excludeId });
+  return steps.map((step) => {
+    if (step.entryType === "search") {
+      const platformLabel = formatPlatformLabel(step.platform);
+      const reason = step.reason;
+      if (reason) {
+        return `${platformLabel} search (“${step.query}”): ${reason}`;
+      }
+      return `${platformLabel} search (“${step.query}”).`;
+    }
+    if (step.interactionType === "pdf_viewer_opened") {
+      const title = step.title || step.context?.title || "a PDF";
+      return `PDF mode · ${title}`;
+    }
+    if (step.interactionType === "open_result") {
+      const title = step.title || step.url || "a result link";
+      return `Evaluating result · ${title}`;
+    }
+    return `${formatInteractionLabel(step.interactionType)} noted.`;
+  });
 }
 
 async function loadState() {
@@ -530,6 +1032,8 @@ const stored = await storage.get([
   storage.keys.TRAJECTORY,
   storage.keys.ONBOARDING,
 ]);
+  searchReasonUiState.clear();
+  searchReasonRequests.clear();
   currentSession = stored[storage.keys.SESSION] || null;
   documentsIndex = stored[storage.keys.DOCUMENTS] || {};
 trajectoryIndex = stored[storage.keys.TRAJECTORY] || {};
@@ -545,10 +1049,38 @@ onboardingState = stored[storage.keys.ONBOARDING] || {};
     if (!Array.isArray(record.searchEpisodes)) {
       record.searchEpisodes = [];
       trajectoryNormalized = true;
+    } else {
+      record.searchEpisodes.forEach((episode, idx) => {
+        const normalized = normalizeSearchEpisodeEntry(episode, idx);
+        if (
+          !episode
+          || episode.id !== normalized.id
+          || episode.reason !== normalized.reason
+          || JSON.stringify(episode.ai_suggestions || [])
+            !== JSON.stringify(normalized.ai_suggestions || [])
+        ) {
+          record.searchEpisodes[idx] = normalized;
+          trajectoryNormalized = true;
+        }
+      });
     }
     if (!Array.isArray(record.interactions)) {
       record.interactions = [];
       trajectoryNormalized = true;
+    } else {
+      record.interactions.forEach((interaction, idx) => {
+        const normalized = normalizeInteractionEntry(interaction, idx);
+        if (
+          !interaction
+          || interaction.id !== normalized.id
+          || interaction.interactionType !== normalized.interactionType
+          || interaction.title !== normalized.title
+          || interaction.url !== normalized.url
+        ) {
+          record.interactions[idx] = normalized;
+          trajectoryNormalized = true;
+        }
+      });
     }
   });
   if (trajectoryNormalized) {
@@ -767,9 +1299,14 @@ function renderAiSuggestionsContent(container, suggestions, options = {}) {
   if (!container) {
     return;
   }
-  const { onSelect, isLoading = false } = options;
+  const {
+    onSelect,
+    isLoading = false,
+    headingText = "AI suggestions",
+    helperText = AI_SUGGESTION_PLACEHOLDER,
+  } = options;
   const heading = document.createElement("h3");
-  heading.textContent = "AI suggestions";
+  heading.textContent = headingText;
   if (isLoading) {
     const status = document.createElement("span");
     status.className = "ai-suggestion-status";
@@ -781,7 +1318,7 @@ function renderAiSuggestionsContent(container, suggestions, options = {}) {
   }
   const helper = document.createElement("p");
   helper.className = "ai-suggestion-helper";
-  helper.textContent = AI_SUGGESTION_PLACEHOLDER;
+  helper.textContent = helperText;
   const picker = createAiSuggestionPicker(suggestions, onSelect, { isLoading });
   container.replaceChildren(heading, helper, picker);
 }
@@ -1715,9 +2252,15 @@ pdfButton.addEventListener("click", () => {
     payload: {
       url: currentPdfCandidate,
       title: currentTabInfo.title || "PDF Document",
+      source: "sidepanel",
     },
   });
 });
+
+if (trajectoryListEl) {
+  trajectoryListEl.addEventListener("click", handleTrajectoryListClick);
+  trajectoryListEl.addEventListener("input", handleTrajectoryListInput);
+}
 
 function dismissSearchTipOverlay() {
   hideSearchTipOverlay(true);
@@ -1751,6 +2294,8 @@ chrome.runtime.onMessage.addListener((message) => {
     currentSession = null;
     documentsIndex = {};
     trajectoryIndex = {};
+    searchReasonUiState.clear();
+    searchReasonRequests.clear();
     onboardingState.searchTipSeen = false;
     storage.set({ [storage.keys.ONBOARDING]: onboardingState });
     sessionInfoEl.textContent = "No active session";
@@ -1771,6 +2316,12 @@ chrome.runtime.onMessage.addListener((message) => {
         timestamp,
       });
     }
+  } else if (message.type === "TRAJECTORY_INTERACTION_RECORDED") {
+    const sessionId = currentSession?.session_id;
+    if (!sessionId) {
+      return;
+    }
+    appendTrajectoryInteraction(sessionId, message.payload);
   } else if (message.type === "DOCUMENT_SUMMARY_SAVED") {
     const sessionId = currentSession?.session_id;
     if (!sessionId) {

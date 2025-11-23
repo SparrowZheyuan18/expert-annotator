@@ -2,7 +2,6 @@
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color-scheme: light dark;
   background-color: #f5f6f8;
-  min-width: 110%;
 }
 
 body {
@@ -319,11 +318,16 @@ h1 {
   gap: 0.2rem;
 }
 
+.trajectory-entry--interaction {
+  border-left-color: rgba(32, 33, 36, 0.35);
+}
+
 .trajectory-entry__meta {
   display: flex;
   justify-content: space-between;
   font-size: 0.78rem;
   color: #5f6368;
+  gap: 0.4rem;
 }
 
 .trajectory-entry__query {
@@ -332,9 +336,71 @@ h1 {
   line-height: 1.3;
 }
 
+.trajectory-entry__edit {
+  margin-left: auto;
+  font-size: 0.68rem;
+  padding: 0.15rem 0.5rem;
+  align-self: flex-start;
+  border-radius: 10px;
+}
+
+.trajectory-entry__body {
+  font-size: 0.82rem;
+  color: #3c4043;
+  line-height: 1.4;
+}
+
 .trajectory-empty {
   font-size: 0.82rem;
   color: #5f6368;
+}
+
+.trajectory-search-reason {
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.6rem 0.6rem;
+  border: 1px solid #e0e3ea;
+  border-radius: 8px;
+  display: grid;
+  gap: 0.4rem;
+  background: #f8f9fb;
+}
+
+.trajectory-search-reason__label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #3c4043;
+}
+
+.trajectory-search-reason textarea {
+  width: 100%;
+  min-height: 56px;
+  resize: vertical;
+  border: 1px solid #cfd4dc;
+  border-radius: 6px;
+  padding: 0.4rem 0.5rem;
+  font-family: inherit;
+  font-size: 0.82rem;
+  box-sizing: border-box;
+}
+
+.trajectory-search-reason__helper {
+  display: flex;
+  justify-content: flex-end;
+  font-size: 0.75rem;
+  color: #6c7178;
+}
+
+.trajectory-search-reason__counter {
+  font-variant-numeric: tabular-nums;
+}
+
+.trajectory-search-reason__actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.trajectory-search-suggestions {
+  margin-bottom: 0.5rem;
 }
 
 .highlight-card {

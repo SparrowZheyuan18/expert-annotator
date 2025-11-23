@@ -217,6 +217,18 @@ class SearchEpisodeResponse(SearchEpisodeBase):
     episode_id: str
 
 
+class SearchIntentAIRequest(BaseModel):
+    query: str
+    platform: Literal["google_scholar", "semantic_scholar"]
+    research_goal: str
+    session_topic: Optional[str] = None
+    recent_steps: List[str] = Field(default_factory=list)
+
+
+class SearchIntentAIResponse(BaseModel):
+    suggestions: List[AISuggestionItem]
+
+
 class SessionCompleteResponse(BaseModel):
     ok: bool
     ended_at: str
@@ -361,6 +373,13 @@ DEFAULT_SUGGESTION_SYSTEM_PROMPT = (
     "Do not add numbering, bullets, or commentary outside the JSON array."
 )
 
+SEARCH_INTENT_SYSTEM_PROMPT = (
+    "You help a domain expert articulate why each scholarly search query matters. "
+    "Respond in JSON ONLY: an array of choices, each with `title` (<=4 words) and `detail` (<=35 words). "
+    "Speak in the first person (“I want to...”) and tie every detail to the stated goal/query. "
+    "Offer concrete, diverse motivations rather than rephrasing the same idea."
+)
+
 
 def _extract_site_from_meta(doc_meta: Dict[str, Any]) -> Optional[str]:
     site = doc_meta.get("site")
@@ -439,6 +458,31 @@ def _build_highlight_prompt(payload: AISuggestionsRequest) -> str:
         sections.append(f"Additional document text:\n{document_text}")
     if query:
         sections.append(f"Active search query: {query}")
+    return "\n\n".join(sections)
+
+
+def _build_search_intent_prompt(payload: SearchIntentAIRequest) -> str:
+    platform_label = "Google Scholar" if payload.platform == "google_scholar" else "Semantic Scholar"
+    goal = _clean_text(payload.research_goal) or "Unspecified"
+    topic = _clean_text(payload.session_topic) or ""
+    query = _clean_text(payload.query) or "N/A"
+    steps = [step for step in payload.recent_steps if _clean_text(step)]
+    sections = [
+        "Role:\nYou are the researcher's private notes explaining why a specific query is needed.",
+        f"Research goal:\n{goal}",
+        f"Search platform:\n{platform_label}",
+        f"Current query:\n{query}",
+    ]
+    if topic:
+        sections.insert(2, f"Session topic:\n{topic}")
+    if steps:
+        joined_steps = "\n".join(f"- {step}" for step in steps[:6])
+        sections.append(f"Recent actions:\n{joined_steps}")
+    sections.append(
+        f"Instruction:\nProvide {AI_SUGGESTION_COUNT} distinct first-person reasons this query helps the goal right now. "
+        "Each reason must mention how the query advances the goal, tests a hunch, or fills a gap."
+    )
+    sections.append("Answer:")
     return "\n\n".join(sections)
 
 
@@ -542,6 +586,44 @@ def _normalize_suggestion_entries(raw: Any) -> List[AISuggestionItem]:
     return suggestions[:AI_SUGGESTION_COUNT]
 
 
+async def _request_litellm_text_completion(
+    *,
+    api_key: Optional[str],
+    base_url: str,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    provider_label: str,
+) -> Optional[str]:
+    if not api_key:
+        return None
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+    try:
+        response = await litellm.acompletion(
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            messages=messages,
+            temperature=0.3,
+            max_tokens=512,
+            n=1,
+            timeout=AI_REQUEST_TIMEOUT,
+        )
+    except Exception as exc:
+        logger.warning("%s text completion failed: %s", provider_label, exc)
+        return None
+    payload_json = response or {}
+    for choice in payload_json.get("choices") or []:
+        message = choice.get("message") or {}
+        content = message.get("content")
+        if content:
+            return content.strip()
+    return None
+
+
 async def _forward_suggestions(payload: AISuggestionsRequest) -> List[AISuggestionItem]:
     if not AI_FORWARD_URL:
         return []
@@ -631,6 +713,55 @@ async def _request_openai_suggestions(payload: AISuggestionsRequest) -> List[AIS
         payload=payload,
         provider_label="LiteLLM/OpenAI",
     )
+
+
+def _generate_search_intent_mock(payload: SearchIntentAIRequest) -> List[AISuggestionItem]:
+    query = _clean_text(payload.query) or "this query"
+    goal = _clean_text(payload.research_goal) or "my research goal"
+    return [
+        AISuggestionItem(
+            title="Scope topic",
+            detail=f"I want to map how “{query}” aligns with {goal} before diving deeper.",
+        ),
+        AISuggestionItem(
+            title="Find methods",
+            detail=f"I’m hoping this search reveals methods that can advance {goal}.",
+        ),
+        AISuggestionItem(
+            title="Check novelty",
+            detail=f"I need to confirm whether “{query}” uncovers work that fills the gap in {goal}.",
+        ),
+    ]
+
+
+async def _request_search_intent_suggestions(payload: SearchIntentAIRequest) -> List[AISuggestionItem]:
+    prompt = _build_search_intent_prompt(payload)
+
+    suggestions: List[AISuggestionItem] = []
+    provider_order = [AI_PROVIDER]
+    fallback_provider = PROVIDER_WINE if AI_PROVIDER == PROVIDER_OPENAI else PROVIDER_OPENAI
+    provider_order.append(fallback_provider)
+    for provider in provider_order:
+        base_url = OPENAI_API_BASE_URL if provider == PROVIDER_OPENAI else WINE_API_BASE_URL
+        api_key = OPENAI_API_KEY if provider == PROVIDER_OPENAI else WINE_API_KEY
+        model = OPENAI_LLM_MODEL if provider == PROVIDER_OPENAI else WINE_LLM_MODEL
+        provider_label = "LiteLLM/OpenAI" if provider == PROVIDER_OPENAI else "LiteLLM/WINE"
+        result = await _request_litellm_text_completion(
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            system_prompt=SEARCH_INTENT_SYSTEM_PROMPT,
+            user_prompt=prompt,
+            provider_label=provider_label,
+        )
+        if result:
+            parsed = _extract_suggestions_from_content(result)
+            if parsed:
+                suggestions = parsed
+                break
+    if not suggestions:
+        suggestions = _generate_search_intent_mock(payload)
+    return suggestions[:AI_SUGGESTION_COUNT]
 
 
 @app.get("/healthz", response_model=HealthResponse)
@@ -723,6 +854,12 @@ async def ai_suggestions_endpoint(payload: AISuggestionsRequest) -> AISuggestion
     if not suggestions:
         suggestions = _generate_mock_suggestions(payload.highlight_text)
     return AISuggestionsResponse(suggestions=suggestions)
+
+
+@app.post("/ai/search-intent", response_model=SearchIntentAIResponse)
+async def search_intent_ai_endpoint(payload: SearchIntentAIRequest) -> SearchIntentAIResponse:
+    suggestions = await _request_search_intent_suggestions(payload)
+    return SearchIntentAIResponse(suggestions=suggestions)
 
 
 @app.post(

@@ -15,6 +15,7 @@ SQLite is used for persistence (`server/expert_annotator.db`). Tables are create
 - `POST /sessions/{session_id}/documents/{document_id}/summary` — Save final thoughts / next steps for a document (populates `global_judgment`).
 - `POST /sessions/{session_id}/complete` — Mark a session as finished and stamp the `end_time`.
 - `POST /ai/suggestions` — Returns LiteLLM-backed suggestions (WINE or OpenAI, depending on `AI_PROVIDER`) when the matching API key is set, can proxy to custom services via `AI_API_URL`, and otherwise falls back to canned copy.
+- `POST /ai/search-intent` — Uses the configured AI provider to draft first-person rationales for a recorded query, returning a list of suggestion objects (`title` + `detail`) that can be surfaced in the UI.
 - `GET /export/{session_id}` — Full session export containing session metadata, documents (with highlights & summaries), search episodes, and recorded interactions.
 
 Example: creating a PDF highlight
