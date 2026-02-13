@@ -467,6 +467,9 @@ function formatPlatformLabel(platform) {
   if (platform === "semantic_scholar") {
     return "Semantic Scholar";
   }
+  if (platform === "google_search") {
+    return "Google Search";
+  }
   return platform.replace(/_/g, " ");
 }
 
@@ -989,9 +992,14 @@ function maybeEnsureSearchReasonSuggestions(sessionId, entry) {
 }
 
 function buildSearchIntentPayload(entry) {
+  const platform = entry.platform === "semantic_scholar"
+    ? "semantic_scholar"
+    : entry.platform === "google_search"
+      ? "google_search"
+      : "google_scholar";
   return {
     query: entry.query || "",
-    platform: entry.platform === "semantic_scholar" ? "semantic_scholar" : "google_scholar",
+    platform,
     research_goal: currentSession?.research_goal || currentSession?.topic || "Clarify the research goal.",
     session_topic: currentSession?.topic || "",
     recent_steps: buildRecentTrajectorySummaries(entry.id),

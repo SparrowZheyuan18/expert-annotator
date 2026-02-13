@@ -1,10 +1,10 @@
-# PDF.js 本地资源
+# PDF.js Local Assets
 
-扩展在 `extension/vendor/` 目录下查找 `pdf.min.js` 与 `pdf.worker.min.js`，用来渲染 PDF 并捕获文本高亮。由于开发环境可能无法访问公共 CDN，需要手动下载一次：
+The extension looks for `pdf.min.js` and `pdf.worker.min.js` in `extension/vendor/` to render PDFs and capture text highlights. Since some development environments cannot access public CDNs, download these files once manually:
 
 ```bash
 curl -L https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js -o extension/vendor/pdf.min.js
 curl -L https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js -o extension/vendor/pdf.worker.min.js
 ```
 
-完成后重新加载 Chrome 扩展即可。若需要使用其它版本的 pdf.js，请同时替换 core 和 worker，确保版本一致。
+After downloading, reload the Chrome extension. If you need a different pdf.js version, replace both the core and worker files so their versions stay aligned.

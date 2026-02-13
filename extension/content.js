@@ -172,6 +172,20 @@
         return null;
       },
     },
+    {
+      name: "google_search",
+      matcher: /(^|\.)google\./i,
+      extract: (url) => {
+        if (!/^\/search/i.test(url.pathname)) {
+          return null;
+        }
+        const query = url.searchParams.get("q");
+        if (!query) {
+          return null;
+        }
+        return query;
+      },
+    },
   ];
 
   if (window.location.protocol === "chrome-extension:") {

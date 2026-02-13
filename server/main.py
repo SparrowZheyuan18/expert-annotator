@@ -204,7 +204,7 @@ class AISuggestionsResponse(BaseModel):
 
 
 class SearchEpisodeBase(BaseModel):
-    platform: Literal["google_scholar", "semantic_scholar"]
+    platform: Literal["google_scholar", "semantic_scholar", "google_search"]
     query: str
     timestamp: str
 
@@ -219,7 +219,7 @@ class SearchEpisodeResponse(SearchEpisodeBase):
 
 class SearchIntentAIRequest(BaseModel):
     query: str
-    platform: Literal["google_scholar", "semantic_scholar"]
+    platform: Literal["google_scholar", "semantic_scholar", "google_search"]
     research_goal: str
     session_topic: Optional[str] = None
     recent_steps: List[str] = Field(default_factory=list)
@@ -462,7 +462,12 @@ def _build_highlight_prompt(payload: AISuggestionsRequest) -> str:
 
 
 def _build_search_intent_prompt(payload: SearchIntentAIRequest) -> str:
-    platform_label = "Google Scholar" if payload.platform == "google_scholar" else "Semantic Scholar"
+    if payload.platform == "google_scholar":
+        platform_label = "Google Scholar"
+    elif payload.platform == "semantic_scholar":
+        platform_label = "Semantic Scholar"
+    else:
+        platform_label = "Google Search"
     goal = _clean_text(payload.research_goal) or "Unspecified"
     topic = _clean_text(payload.session_topic) or ""
     query = _clean_text(payload.query) or "N/A"
@@ -608,7 +613,7 @@ async def _request_litellm_text_completion(
             model=model,
             messages=messages,
             temperature=0.3,
-            max_tokens=512,
+            max_tokens=4096,
             n=1,
             timeout=AI_REQUEST_TIMEOUT,
         )

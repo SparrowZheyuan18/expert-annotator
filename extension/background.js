@@ -2,7 +2,9 @@
 
 const API_BASE_URL = "http://127.0.0.1:8000";
 const lastSearchByTab = new Map();
+const sessionSearchHistory = new Map();
 const TRAJECTORY_KEY = "trajectory";
+const SESSION_SEARCH_HISTORY_LIMIT = 200;
 
 console.log("Expert Annotator background service worker initialized.");
 
@@ -117,6 +119,16 @@ chrome.runtime.onMessage.addListener((message, sender) => {
       if (previous && previous.query === message.payload.query && previous.platform === message.payload.platform) {
         return;
       }
+      const sessionHistory = getSessionSearchSet(session.session_id);
+      const normalizedSignature = normalizeSearchSignature(message.payload.platform, message.payload.query);
+      if (sessionHistory.has(normalizedSignature)) {
+        return;
+      }
+      sessionHistory.add(normalizedSignature);
+      if (sessionHistory.size > SESSION_SEARCH_HISTORY_LIMIT) {
+        const first = sessionHistory.values().next().value;
+        sessionHistory.delete(first);
+      }
       lastSearchByTab.set(sender.tab.id, {
         platform: message.payload.platform,
         query: message.payload.query,
@@ -146,6 +158,7 @@ chrome.runtime.onMessage.addListener((message, sender) => {
         })
         .catch((error) => {
           console.error("Failed to record search episode", error);
+          sessionHistory.delete(normalizedSignature);
           appendSearchEpisode(session.session_id, baseEpisode);
           chrome.runtime.sendMessage({
             type: "SEARCH_RECORDED",
@@ -263,6 +276,7 @@ chrome.runtime.onMessage.addListener((message, sender) => {
 
   if (message.type === "SESSION_RESET") {
     lastSearchByTab.clear();
+    sessionSearchHistory.clear();
     chrome.storage.local.set({ [TRAJECTORY_KEY]: {} });
   }
 });
@@ -293,4 +307,15 @@ function appendInteraction(sessionId, entry) {
     existing.interactions = next.slice(0, 50);
     existing.searchEpisodes = existing.searchEpisodes || [];
   });
+}
+function getSessionSearchSet(sessionId) {
+  if (!sessionSearchHistory.has(sessionId)) {
+    sessionSearchHistory.set(sessionId, new Set());
+  }
+  return sessionSearchHistory.get(sessionId);
+}
+
+function normalizeSearchSignature(platform, query) {
+  const normalizedQuery = (query || "").trim().replace(/\s+/g, " ").toLowerCase();
+  return `${platform || "unknown"}::${normalizedQuery}`;
 }
